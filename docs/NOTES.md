@@ -16,10 +16,12 @@ The only thing that's known is this little circuit diagram:
  * Pin 0: not shown, not connected
  * Pin 1: write enable
  * Pin 2: mode wheel switch, open when the wheel reaches STOP position
- * Pin 3: control solenoid (high switch)
+ * Pin 3: control solenoid 12V (high-side switch)
  * Pin 4: GND
  * Pin 5: Photo interruptor output
  * Pin 6: Photo interruptor +5V
  * Pin 7: cassette detect
  
 ![pin-numbers](https://github.com/svofski/tapeshnik/assets/6445874/f381c61b-fc72-4d21-b55c-03d468b52f7f)
+
+The motor pins are not on the main connector. It is a 12V DC motor. Connections on the motor are clearly marked "+" and "-".
