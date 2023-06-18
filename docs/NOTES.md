@@ -33,7 +33,7 @@ The mechanism modes are set by pulsing the solenoid. The feeler arm follows the 
 ### Control
 
 ![full-turn](https://github.com/svofski/tapeshnik/assets/6445874/65a4049c-22cc-491b-8ec7-eb3acd92936b)
-The full turn of the command wheel takes approximately 800ms.
+The full turn of the command wheel takes approximately 900ms.
 
 The wheel has 3 characteristic positions: 12 hours: STOP, 6 hours: PLAY, 10 hours: FF/REW.
 
