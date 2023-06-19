@@ -26,7 +26,7 @@ The only thing that's known is this little circuit diagram:
  
 ![pin-numbers](https://github.com/svofski/tapeshnik/assets/6445874/f381c61b-fc72-4d21-b55c-03d468b52f7f)
 
-The motor pins are not on the main connector. It is a 12V DC motor. Connections on the motor are clearly marked "+" and "-".
+The motor pins are not on the main connector. It is a 12V DC motor. Connections on the motor are clearly marked "+" and "-". If my PSU is to be trusted, the motor alone consumes 0.045A at 12V in playback mode.
 
 The mechanism modes are set by pulsing the solenoid. The feeler arm follows the grooves on the command wheel and sets relevant parts of the mechanism in motion.
 
