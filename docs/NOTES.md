@@ -43,5 +43,4 @@ The solenoid needs a pulse of about 10ms to begin state transition. Holding the 
  * From PLAY position, a single short pulse transitions to FF position.
  * From PLAY position, a short pulse + 50ms delay + a short pulse transitions to REW position.
  * From FF/REW any pulse transitions to STOP position.
-
-
+![wheel-diagram](wheel-state-chart.png)
