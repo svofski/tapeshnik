@@ -39,8 +39,9 @@ The wheel has 3 characteristic positions: 12 hours: STOP, 6 hours: PLAY, 10 hour
 
 The solenoid needs a pulse of about 10ms to begin state transition. Holding the pulse for longer is not necessary. It is possible that holding solenoid voltage works better than short pulses, I don't know which is the recommended mode of operation. Short pulses seem safer for the semiconductors.
 
+#### Command wheel state transitions
+![wheel-diagram](wheel-state-chart1.png)
  * From STOP position, the first pulse will always put mechanism in PLAY position. 
  * From PLAY position, a single short pulse transitions to FF position.
  * From PLAY position, a short pulse + 50ms delay + a short pulse transitions to REW position.
  * From FF/REW any pulse transitions to STOP position.
-![wheel-diagram](wheel-state-chart.png)
