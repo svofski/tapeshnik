@@ -13,6 +13,8 @@ ME-136 is the erase head. KS211M is Write/Playback head. The actual mechanism th
 
 The only thing that's known is this little circuit diagram:
 
+*THIS CIRCUIT IS HIGHLY SUSPECT!*
+
 ![ks211m](https://github.com/svofski/tapeshnik/assets/6445874/78b413ec-f755-44b8-b7a5-09ab92c984bb)
 
  * Pin 0: not shown, not connected
@@ -23,6 +25,8 @@ The only thing that's known is this little circuit diagram:
  * Pin 5: Photo interruptor output
  * Pin 6: Photo interruptor +5V
  * Pin 7: cassette detect
+
+In reality the sensor board on my mechanism didn't have any resistors. I'm afraid I found it out too late. Maybe I damaged the photo sensor, or maybe it's some different thing entirely, but I'm replacing the sensor and changing the circuit to use a more sensible open-emitter connection.
  
 ![pin-numbers](https://github.com/svofski/tapeshnik/assets/6445874/f381c61b-fc72-4d21-b55c-03d468b52f7f)
 
