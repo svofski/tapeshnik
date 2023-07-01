@@ -26,7 +26,14 @@ The only thing that's known is this little circuit diagram:
  * Pin 6: Photo interruptor +5V
  * Pin 7: cassette detect
 
-In reality the sensor board on my mechanism didn't have any resistors. I'm afraid I found it out too late. Maybe I damaged the photo sensor, or maybe it's some different thing entirely, but I'm replacing the sensor and changing the circuit to use a more sensible open-emitter connection.
+In reality the sensor board on my mechanism didn't have any resistors. I'm afraid I found it out too late. Maybe I damaged the photo sensor, or maybe it's some different thing entirely, but I'm replacing the sensor and changing the circuit to use a more sensible open-emitter connection. I removed the original sensor board and replaced it with this circuit using TCRT1000 reflective photo interruptor that I was able to find.
+![ks211munfuck](ks211m_unfuck.png)
+
+![photoint-wires1](photoint-wires1.jpg)
+Here are the wires that go to the original sensor board, labeled.
+
+![photoint-wires2](photoint-wires2.jpg)
+Photointerruptor with resistors hidden in the thermal shrink tubes, kind of squeezed into the position of the old sensor board.
  
 ![pin-numbers](https://github.com/svofski/tapeshnik/assets/6445874/f381c61b-fc72-4d21-b55c-03d468b52f7f)
 
