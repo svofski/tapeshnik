@@ -34,6 +34,12 @@ Here are the wires that go to the original sensor board, labeled.
 
 ![photoint-wires2](photoint-wires2.jpg)
 Photointerruptor with resistors hidden in the heat shrink tubes, tightly squeezed into the position of the old sensor board.
+
+![reflective-wheel](reflective-wheel.gif)
+The reflective sector wheel on the takeup reel. Monitoring it should help detecting when the tape is not moving and autostop must be engaged.
+
+
+
  
 ![pin-numbers](https://github.com/svofski/tapeshnik/assets/6445874/f381c61b-fc72-4d21-b55c-03d468b52f7f)
 
