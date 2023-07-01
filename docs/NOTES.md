@@ -38,6 +38,8 @@ Photointerruptor with resistors hidden in the heat shrink tubes, tightly squeeze
 ![reflective-wheel](reflective-wheel.gif)
 The reflective sector wheel on the takeup reel. Monitoring it should help detecting when the tape is not moving and autostop must be engaged.
 
+![photoint-osc1](photoint-osc1.jpg)
+The signal on the phototransistor collector (connector pin 5 after modiifcation).
 
 
  
