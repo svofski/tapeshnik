@@ -67,3 +67,12 @@ The solenoid needs a pulse of about 10ms to begin state transition. Holding the 
  * From PLAY position, a single short pulse transitions to FF position.
  * From PLAY position, a short pulse + 50ms delay + a short pulse transitions to REW position.
  * From FF/REW any pulse transitions to STOP position.
+
+#### Tachometer and autostop
+This mechanism has no dedicated autostop sensor. The only way to implement autostop is by sensing rotation of the takeup reel. Same signal can also be used to implement a tape counter. 
+
+Autostop is implemented with a help of a recurring timer. Every once in a while, a timer callback increments the counter. A tacho interrupt callback resets the counter. If the timer counter reaches certain value, e.g. 2, it means that it was not reset because the takeup reel is not spinning anymore and it's time to stop. This number would be different depending on fast / slow tape speed, but it also depends on where in the reel we are. A full spool near the end of tape spins slower.
+
+Another safety mechanism is broken tape detection. An unusually quickly rotating takeup reel indicates that the tape is not held by the capstan/pinch roller and is likely torn. The mechanism will also stop if unusually fast rotation is detected.
+
+After a short while (1500ms) after full stop, the main motor is turned off.
