@@ -69,7 +69,7 @@ The solenoid needs a pulse of about 10ms to begin state transition. Holding the 
  * From FF/REW any pulse transitions to STOP position.
 
 #### Tachometer and autostop
-This mechanism has no dedicated autostop sensor. The only way to implement autostop is by sensing rotation of the takeup reel. Same signal can also be used to implement a tape counter. 
+This mechanism has no dedicated autostop sensor. The only way to implement autostop is by sensing rotation of the takeup reel. Same signal can also be used to implement a tape counter. A C60 cassette has approximately 13270 counts. The simple sensor has no way of telling rotation direction, so the counter tends to run away pretty quickly when there is a lot of back and forth with the tape. It should be possible to improve tracking by adding quadrature sensor like AEDR-8300.
 
 Autostop is implemented with a help of a recurring timer. Every once in a while, a timer callback increments the counter. A tacho interrupt callback resets the counter. If the timer counter reaches certain value, e.g. 2, it means that it was not reset because the takeup reel is not spinning anymore and it's time to stop. This number would be different depending on fast / slow tape speed, but it also depends on where in the reel we are. A full spool near the end of tape spins slower.
 
