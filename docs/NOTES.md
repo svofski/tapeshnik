@@ -76,3 +76,26 @@ Autostop is implemented with a help of a recurring timer. Every once in a while,
 Another safety mechanism is broken tape detection. An unusually quickly rotating takeup reel indicates that the tape is not held back by the capstan/pinch roller and is likely torn. The mechanism will also stop if unusually fast rotation is detected.
 
 After a short while (1500ms) after full stop, the main motor is turned off.
+
+#### Control conclusion
+
+![breadborat1](control-on-breadborat1.jpg)
+
+![breadborat2](control-on-breadborat2.jpg)
+
+This could be built on a breadboard in a more compact way than I did it initially, but I transferred the working design to a protoyping board. I'm not the best when it comes to working on these things, but eventually I got the things right and the control circuit is now pretty solid. This opens up the way to work on the magnetic circuits.
+
+![protoborat1](control-on-protoborat1.jpg)
+
+### Magnetics
+
+I'm expecting to get some results with this circuit that I copied from Commodore 1531 assembly version NP-090:
+
+![mag-circuit1](mag-circuit1.jpg)
+
+My only change here is the addition of CD4052 multiplexor to switch between output and input circuits. I don't yet know if it's going to work.
+
+![magnetics1](magnetics-bread1.jpg)
+
+Assembled amplifiers on the breadboard.
+
