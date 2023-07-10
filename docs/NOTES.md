@@ -85,7 +85,7 @@ After a short while (1500ms) after full stop, the main motor is turned off.
 
 This could be built on a breadboard in a more compact way than I did it initially, but I transferred the working design to a protoyping board. I'm not the best when it comes to working on these things, but eventually I got the things right and the control circuit is now pretty solid. This opens up the way to work on the magnetic circuits.
 
-![protoborat1](control-on-protoborat1.jpg)
+![protoborat1](control-protoborat1.jpg)
 
 ### Magnetics
 
