@@ -26,5 +26,9 @@ add_compile_options(-Wall
         -Wno-maybe-uninitialized
         )
 
-# Hardware-specific examples in subdirectories:
+# libcorrect
+add_subdirectory(../libcorrect libcorrect)
+
+# main program
 add_subdirectory(pico)
+

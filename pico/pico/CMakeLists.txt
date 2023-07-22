@@ -6,7 +6,7 @@ add_executable(tapeshnik
         )
 
 # pull in common dependencies
-target_link_libraries(tapeshnik pico_stdlib)
+target_link_libraries(tapeshnik pico_stdlib correct_static)
 
 pico_enable_stdio_usb(tapeshnik  1)
 pico_enable_stdio_uart(tapeshnik 0)
