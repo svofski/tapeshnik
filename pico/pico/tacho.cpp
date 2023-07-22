@@ -95,7 +95,6 @@ bool autostop_alarm_callback(repeating_timer_t *rt)
     }
 
     if (autostop_alarm_counter > AUTOSTOP_COUNTER_LIMIT) {
-        //printf("AUTOSTOP\n");
         request_wheel_stop();
         return false; // stop
     }

@@ -1,12 +1,12 @@
 add_executable(tapeshnik
-        tapeshnik.c
-        debounce.c
-        tacho.c
-        wheel.c
+        tapeshnik.cpp
+        debounce.cpp
+        tacho.cpp
+        wheel.cpp
         )
 
 # pull in common dependencies
-target_link_libraries(tapeshnik pico_stdlib correct_static)
+target_link_libraries(tapeshnik pico_stdlib hardware_pwm correct_static)
 
 pico_enable_stdio_usb(tapeshnik  1)
 pico_enable_stdio_uart(tapeshnik 0)
