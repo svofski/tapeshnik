@@ -87,13 +87,23 @@ This could be built on a breadboard in a more compact way than I did it initiall
 
 ![protoborat1](control-protoborat1.jpg)
 
+Video demo of motor control: https://www.youtube.com/watch?v=q-qPT_CDH74
+
 ### Magnetics
 
-I'm expecting to get some results with this circuit that I copied from Commodore 1531 assembly version NP-090:
+I'm expecting to get some results with this circuit that I copied from Commodore 1531 assembly version NP-090. Hopefully CD4052 will allow head commutation on the fly, if it does not, I'll have to find a better way.
 
 ![mag-circuit1](mag-circuit1.jpg)
 
-My only change here is the addition of CD4052 multiplexor to switch between output and input circuits. I don't yet know if it's going to work.
+First writing experiment video: https://www.youtube.com/watch?v=b4VsjFtVbdQ
+
+(Updated 23.07.23)
+
+The circuit didn't work fully as expected, I had to troubleshoot it and make some changes. Video of troubleshooting process: https://www.youtube.com/watch?v=exBDKgd-HhU
+
+Problems that I encountered:
+  * low noise immunity: changed some routing on the breadboard, removed cd4052 for the time being, increased hysteresis
+  * asymmetric waveform, 45-35% duty cycle instead of expected 50%. Changed R25 to pull up to +5 instead of GND
 
 ![magnetics1](magnetics-bread1.jpg)
 
