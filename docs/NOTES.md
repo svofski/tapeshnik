@@ -118,17 +118,20 @@ Current goal: MFM. Example transport-level layout:
       * 223 bytes payload
       * 32 bytes fec
 
+Data payload layout:
+  * track number [1]
+  * sector number [3]
+  * short copy of dirent: filename [12] + block number [4]
+  * data [200]
+  * crc-16 [2]
+  * reserved [1]
+
 Algorithm for writing sector number N+1:
   * locate sector N
   * read until the end
   * switch into write mode
   * write sector N+1
 
-Data payload layout:
-  * sector number [4]
-  * short copy of dirent: filename [12] + block number [4]
-  * data [200]
-  * reserverd [3]
 
 Or maybe should the sector marks be written once, leaving some small gaps for the rewrittable sections? In that case, for example
 
