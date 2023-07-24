@@ -107,5 +107,33 @@ Problems that I encountered:
 
 ![magnetics1](magnetics-bread1.jpg)
 
-Assembled amplifiers on the breadboard.
+Assembled amplifiers on the breadboard (before the debugging)
+
+## Logic
+
+Current goal: MFM. Example transport-level layout: 
+  * leader sequence for PLL tune-up and to compensate for r/w switching and mechanical variance ~32 bytes
+  * sync A1
+  * 255 bytes data
+      * 223 bytes payload
+      * 32 bytes fec
+
+Algorithm for writing sector number N+1:
+  * locate sector N
+  * read until the end
+  * switch into write mode
+  * write sector N+1
+
+Data payload layout:
+  * sector number [4]
+  * short copy of dirent: filename [12] + block number [4]
+  * data [200]
+  * reserverd [3]
+
+Or maybe should the sector marks be written once, leaving some small gaps for the rewrittable sections? In that case, for example
+
+  * leader tone, A1, sector-number, A1, sector-number, A1, sector-number
+  * long gap to fit the entire block of data, including the leader and its own sync sequence
+  * next..
+
 
