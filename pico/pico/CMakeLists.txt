@@ -5,6 +5,7 @@ add_executable(tapeshnik
         wheel.cpp
         bitstream.cpp
         plaintext.cpp
+        crc.c
         )
 
 pico_generate_pio_header(tapeshnik ${CMAKE_CURRENT_LIST_DIR}/bitstream.pio)

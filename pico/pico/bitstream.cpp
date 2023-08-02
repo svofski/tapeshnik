@@ -19,6 +19,8 @@
 
 #include "correct.h"
 
+#include "crc.h"
+
 #include "config.h"
 
 #define MFM_FREQ 10000 // max frequency at output
@@ -85,13 +87,9 @@ size_t rx_fec_index;
 sector_payload_t rx_sector_buf;
 int32_t rx_prev_sector_num;
 
-uint16_t calculate_crc(const uint8_t * data, size_t len)
+uint16_t calculate_crc(uint8_t * data, size_t len)
 {
-    uint16_t result = 0;
-    for (size_t i = 0; i < len; ++i) {
-        result = i ^ (result + data[i]);
-    }
-    return result;
+    return MODBUS_CRC16_v3(data, len);
 }
 
 // encode raw payload (223 bytes) to 255-byte output buffer
