@@ -1,10 +1,3 @@
-/**
- * Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
- *
- * SPDX-License-Identifier: BSD-3-Clause
- */
-
-//#include <stdio.h>
 #include <cstdio>
 #include <cstdint>
 #include <array>
@@ -17,11 +10,12 @@
 #include "hardware/pio.h"
 #include "bitstream.pio.h"
 
-#include "correct.h"
-
-#include "crc.h"
-
 #include "config.h"
+
+#include "correct.h"
+#include "crc.h"
+#include "mfm.h"
+
 
 #define MFM_FREQ 10000 // max frequency at output
 
@@ -29,8 +23,6 @@
 #define  Ki     0.000137
 #define  alpha  0.099
 
-//extern const uint8_t plaintext[];
-//extern const size_t plaintext_sz;
 
 //MFM_SYNC = [01,00,01,00,10,00,10,01]
 const uint16_t MFM_SYNC_A1 = 0x4489;// 0100,0100,1000,1001
@@ -110,63 +102,24 @@ size_t encode_block(correct_reed_solomon * rs, const uint8_t * data, size_t data
 }
 
 
-// --- MFM ----
-
-// 8 bits -> 16 mfm-bits, returns last bit 
-uint32_t mfm_encode_twobyte(uint8_t c1, uint8_t c2, uint8_t *prev_bit)
-{
-    uint16_t o = (c1 << 8) | c2;
-
-    uint8_t prev = *prev_bit;
-    uint32_t mfm = 0;
-
-    for (int i = 0; i < 16; ++i) {
-        int clock = 0;
-        int bit = (o >> (15 - i)) & 1;
-        if (bit == 0) {
-            clock = 1 - prev;
-        }
-        prev = bit;
-
-        mfm = (mfm << 1) | clock;
-        mfm = (mfm << 1) | bit;
-    }
-
-    *prev_bit = prev;
-
-    return mfm;
-}
-
-void mfm_decode_twobyte(uint32_t mfm, uint8_t * c1, uint8_t * c2)
-{
-    uint tb = 0;
-
-    for (int i = 0; i < 16; ++i) {
-        // just skip clock bits
-        uint bit = (mfm & (1 << 30)) >> 30;
-        tb = (tb << 1) | bit;
-        mfm <<= 2;
-    }
-    *c1 = (tb >> 8) & 0xff;
-    *c2 = tb & 0xff;
-}
-
-typedef enum _mfm_track_state
+enum reader_state_t
 {
     TS_RESYNC = 0,
     TS_READ,
     TS_TERMINATE,
-} mfm_track_state_t;
+};
 
-typedef mfm_track_state_t (*mfm_callback_t)(mfm_track_state_t, uint32_t);
+// reader callback: receives tracking state and 32 sampled bits, returns new state
+typedef reader_state_t (*reader_callback_t)(reader_state_t, uint32_t);
 
-uint32_t mfm_track_simple(mfm_callback_t cb)
+// fixed timing reader with callback
+uint32_t read_loop_simple(reader_callback_t cb)
 {
     uint32_t prev = 0;
     int sample_t = 0;
     int bitcount = 0;
 
-    mfm_track_state_t state = TS_RESYNC;
+    reader_state_t state = TS_RESYNC;
 
     for (; state != TS_TERMINATE;) {
         uint32_t cur = pio_sm_get_blocking(pio, sm_rx);
@@ -208,7 +161,9 @@ uint32_t mfm_track_simple(mfm_callback_t cb)
     return 0;
 }
 
-uint32_t mfm_track_pid(mfm_callback_t cb)
+// delay-locked loop tracker with PI-tuning
+// borrows from https://github.com/carrotIndustries/redbook/ by Lukas K.
+uint32_t read_loop_delaylocked(reader_callback_t cb)
 {
     uint32_t lastbit = 0;
     int phase_delta = 0;
@@ -230,14 +185,13 @@ uint32_t mfm_track_pid(mfm_callback_t cb)
     int iacc_size = acc_size * scale;
     int iacc = iacc_size / 2;
 
-
     int bitcount = 0;
 
-    mfm_track_state_t state = TS_RESYNC;
+    reader_state_t state = TS_RESYNC;
 
     for (; state != TS_TERMINATE;) {
-        uint32_t bit = pio_sm_get_blocking(pio, sm_rx); // bit
-        if (bit != lastbit) {  // input transition
+        uint32_t bit = pio_sm_get_blocking(pio, sm_rx); // take next sample
+        if (bit != lastbit) {                   // input transition
             phase_delta = iacc_size / 2 - iacc; // 180 deg off transition point
         }
 
@@ -259,8 +213,7 @@ uint32_t mfm_track_pid(mfm_callback_t cb)
         iacc = iacc + ftw;
         if (iacc >= iacc_size) {
             iacc -= iacc_size;
-            //sampled_bits[(*sampled_bits_sz)++] = bit;
-            mfm_bits = (mfm_bits << 1) | bit;
+            mfm_bits = (mfm_bits << 1) | bit;   // sample bit
 
             switch (state) {
                 case TS_RESYNC:
@@ -284,8 +237,8 @@ uint32_t mfm_track_pid(mfm_callback_t cb)
     return 0;
 }
 
-// expect MFM sync word, then read and print
-mfm_track_state_t simple_mfm_reader(mfm_track_state_t state, uint32_t bits)
+// basic mfm reader callback: expect MFM sync word, then read and print forever
+reader_state_t simple_mfm_reader(reader_state_t state, uint32_t bits)
 {
     if (state == TS_RESYNC) {
         if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
@@ -303,6 +256,7 @@ mfm_track_state_t simple_mfm_reader(mfm_track_state_t state, uint32_t bits)
     return state;
 }
 
+// ruins raw sector data for testing
 // reed-solomon will recover up to min_distance / 2 byte errors
 void fuckup_sector_data()
 {
@@ -313,6 +267,7 @@ void fuckup_sector_data()
     }
 }
 
+// decodes and verifies data from rx_sector_buf
 int correct_sector_data()
 {
     uint8_t * rx_ptr = reinterpret_cast<uint8_t *>(&rx_sector_buf);
@@ -353,7 +308,8 @@ int correct_sector_data()
     return 0;
 }
 
-mfm_track_state_t sector_mfm_reader(mfm_track_state_t state, uint32_t bits)
+// mfm sector reader callback
+reader_state_t sector_mfm_reader(reader_state_t state, uint32_t bits)
 {
     if (state == TS_RESYNC) {
         if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
@@ -385,86 +341,26 @@ mfm_track_state_t sector_mfm_reader(mfm_track_state_t state, uint32_t bits)
     return state;
 }
 
-
-// try running it on core1?
-uint32_t mfm_wait_sync(PIO pio, uint sm_rx, uint16_t sync16, uint32_t max_bits)
-{
-    uint32_t prev = 0;
-    int sample_t = 0;
-
-    for (uint i = 0; i < max_bits; ++i) {
-        uint32_t cur = pio_sm_get_blocking(pio, sm_rx);
-        if (cur != prev) {
-            sample_t = 0;
-        }
-        else {
-            ++sample_t;
-            if (sample_t == mfm_period) {
-                sample_t = 0;
-            }
-        }
-
-        if (sample_t == mfm_midperiod) {
-            // take sample hopefully in the middle 
-            mfm_bits = (mfm_bits << 1) | cur;
-            //printf("%x ", mfm_bits);
-            if ((mfm_bits & 0xffff) == sync16) {
-                //printf("HOORAY\n");
-                return mfm_bits;
-            }
-        }
-
-        prev = cur;
-    }
-
-    return 0;
-}
-
-// sample and return 32 mfm-bits
-// return value suitable for decoding with mfm_decode_twobyte()
-uint32_t mfm_recv32(PIO pio, uint sm_rx)
-{
-    uint32_t prev = 0;
-    int sample_t = 0;
-
-    for (uint n = 0; n < 32;) {
-        uint32_t cur = pio_sm_get_blocking(pio, sm_rx);
-        if (cur != prev) {
-            sample_t = 0;
-        }
-        else {
-            ++sample_t;
-            if (sample_t == mfm_period) {
-                sample_t = 0;
-            }
-        }
-
-        // take sample hopefully in the middle 
-        if (sample_t == mfm_midperiod) {
-            mfm_bits = (mfm_bits << 1) | cur;
-            ++n;
-        }
-
-        prev = cur;
-    }
-
-    return mfm_bits;
-}
-
+// core1 runs independently and pretends not to know anything
+// about received data
 void core1_entry()
 {
     rx_prev_sector_num = -1;
-    mfm_track_pid(sector_mfm_reader);
+    read_loop_delaylocked(sector_mfm_reader);
 }
 
 void bitstream_test() {
+    // load pio programs
+    // tx program loads 32-bit words and sends them 1 bit at a time every 8 clock cycles
     uint offset_tx = pio_add_program(pio, &bitstream_tx_program);
     printf("Transmit program loaded at %d\n", offset_tx);
+
+    // rx program samples input on every clock cycle and outputs a word
     uint offset_rx = pio_add_program(pio, &bitstream_rx_program);
     printf("Receive program loaded at %d\n", offset_rx);
 
     // Configure state machines, push bits out at 8000 bps (max freq 4000hz)
-    float clkdiv = 125e6/(MFM_FREQ * 2 * 8);
+    constexpr float clkdiv = 125e6/(MFM_FREQ * 2 * 8);
 
     bitstream_tx_program_init(pio, sm_tx, offset_tx, GPIO_WRHEAD, clkdiv);
     bitstream_rx_program_init(pio, sm_rx, offset_rx, GPIO_RDHEAD, clkdiv);
@@ -474,10 +370,10 @@ void bitstream_test() {
 
     uint8_t mfm_prev_bit;
 
-    printf("getting plaintext\n");
+    // load plaintext data
     size_t psz = get_plaintext_size();
     const unsigned char * plaintext = get_plaintext();
-    printf("got plaintext\n");
+    printf("plaintext size: %lu bytes\n", psz);
 
     // initialize forward error correction
     rs_tx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
@@ -497,24 +393,27 @@ void bitstream_test() {
     std::copy_n(std::string("alice.txt  ").begin(), 12, &tx_sector_buf.filename[0]);
     tx_sector_buf.reserved2 = '*';
 
+    // mark time to calculate effective payload CPS
     start_time = time_us_64();
 
-    // make 200-byte long blocks
+    // encode the blocks and send them out
     for (size_t input_ofs = 0; input_ofs < psz; input_ofs += payload_data_sz) {
         int data_sz = std::min(psz - input_ofs, payload_data_sz);
 
+        // use '#' as a EOF marker
         if (data_sz + input_ofs >= psz) {
             tx_sector_buf.reserved2 = '#';
         }
 
-        size_t encoded_len = encode_block(rs_tx, plaintext + input_ofs,
-                data_sz, &tx_sector_buf, tx_fec_buf.begin());
+        encode_block(rs_tx, plaintext + input_ofs, data_sz, &tx_sector_buf, tx_fec_buf.begin());
 
-        // this also creates a gap for the rx to decode everything
+        // leader serves for tuning up the DLL, it also creates a time gap
+        // for the rx to decode previous block
         pio_sm_put_blocking(pio, sm_tx, 0x55555555);
         pio_sm_put_blocking(pio, sm_tx, 0x55555555);
         pio_sm_put_blocking(pio, sm_tx, 0x55555555);
         pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+        // mfm sync word
         pio_sm_put_blocking(pio, sm_tx, MFM_SYNC);
 
         for (size_t i = 0; i < tx_fec_buf.size(); i += 2) {
@@ -523,7 +422,7 @@ void bitstream_test() {
             pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
         }
 
-
+        // advance sector and block numbers
         ++tx_sector_buf.block_num;
         ++tx_sector_buf.sector_num;
     }
