@@ -10,6 +10,8 @@
 #include "hardware/pio.h"
 #include "bitstream.pio.h"
 
+#include "bitstream.h"
+
 #include "config.h"
 
 #include "correct.h"
@@ -17,11 +19,11 @@
 #include "mfm.h"
 
 
-#define MFM_FREQ 10000 // max frequency at output
+#define MFM_FREQ 3500 // max frequency at output
 
-#define  Kp     0.093
-#define  Ki     0.000137
-#define  alpha  0.099
+#define  Kp     0.0333
+#define  Ki     0.000001
+#define  alpha  0.1
 
 
 //MFM_SYNC = [01,00,01,00,10,00,10,01]
@@ -43,6 +45,8 @@ int mfm_midperiod = mfm_period / 2;
 
 int64_t start_time, end_time;
 
+uint32_t inverted = 0;
+
 // error correction
 constexpr size_t block_length = 255;
 constexpr size_t min_distance = 32;
@@ -53,6 +57,9 @@ correct_reed_solomon * rs_tx;
 correct_reed_solomon * rs_rx;
 
 constexpr size_t payload_data_sz = 200;
+
+size_t debugbuf_index = 0;
+std::array<uint8_t, 20000> debugbuf;
 
 // sector payload: 1 + 1 + 2 + 12 + 4 + 200 + 2 + 1 = 223 bytes
 struct sector_payload_t { 
@@ -186,11 +193,21 @@ uint32_t read_loop_delaylocked(reader_callback_t cb)
     int iacc = iacc_size / 2;
 
     int bitcount = 0;
+    int rawcnt = 0;   // raw sample count for debugbuffa
+    uint32_t rawsample = 0;
 
     reader_state_t state = TS_RESYNC;
 
     for (; state != TS_TERMINATE;) {
         uint32_t bit = pio_sm_get_blocking(pio, sm_rx); // take next sample
+        rawsample = (rawsample << 1) | bit;
+        if (debugbuf_index < debugbuf.size()) {
+            if (++rawcnt == 8) {
+                rawcnt = 0;
+                debugbuf[debugbuf_index++] = 0xff & rawsample;
+            }
+        }
+
         if (bit != lastbit) {                   // input transition
             phase_delta = iacc_size / 2 - iacc; // 180 deg off transition point
         }
@@ -218,7 +235,13 @@ uint32_t read_loop_delaylocked(reader_callback_t cb)
             switch (state) {
                 case TS_RESYNC:
                     state = cb(state, mfm_bits);
-                    bitcount = 0;
+                    //if (++bitcount >= 128) {
+                    //    bitcount = 0;
+                    //    printf("[%d]", ftw);
+                    //}
+                    if (state == TS_READ) {
+                        bitcount = 0;
+                    }
                     break;
                 case TS_READ:
                     if (++bitcount == 32) {
@@ -241,18 +264,47 @@ uint32_t read_loop_delaylocked(reader_callback_t cb)
 reader_state_t simple_mfm_reader(reader_state_t state, uint32_t bits)
 {
     if (state == TS_RESYNC) {
+        //printf("%x\n", bits);
         if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
             start_time = time_us_64();
+            printf("SYNC\n");
+            inverted = 0;
+            return TS_READ;
+        }
+        if (((~mfm_bits) & 0xffff) == MFM_SYNC_A1) {
+            start_time = time_us_64();
+            printf("SYNC INV\n");
+            inverted = 0xffffffff;
             return TS_READ;
         }
     }
     else if (state == TS_READ) {
         uint8_t c1, c2;
-        mfm_decode_twobyte(bits, &c1, &c2);
+        mfm_decode_twobyte(bits ^ inverted, &c1, &c2);
         putchar(c1);
         putchar(c2);
         return TS_READ;
     }
+    return state;
+}
+
+int debugbuf_bitcount = 0;
+
+reader_state_t debugbuf_reader(reader_state_t state, uint32_t bits)
+{
+    // this is always resync, so count our own bits here
+    if (++debugbuf_bitcount == 32) {
+        debugbuf_bitcount = 0;
+        debugbuf[debugbuf_index++] = 0xff & (bits >> 24);
+        debugbuf[debugbuf_index++] = 0xff & (bits >> 16);
+        debugbuf[debugbuf_index++] = 0xff & (bits >> 8);
+        debugbuf[debugbuf_index++] = 0xff & (bits);
+    }
+
+    if (debugbuf_index + 4 >= debugbuf.size()) {
+        state = TS_TERMINATE;
+    }
+
     return state;
 }
 
@@ -314,12 +366,21 @@ reader_state_t sector_mfm_reader(reader_state_t state, uint32_t bits)
     if (state == TS_RESYNC) {
         if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
             rx_fec_index = 0;
+            printf("\nSYNC\n");
+            inverted = 0x0;
             return TS_READ;
         }
+        else if (((~mfm_bits) & 0xffff) == MFM_SYNC_A1) {
+            rx_fec_index = 0;
+            printf("\nSYNC INV\n");
+            inverted = 0xffffffff;
+            return TS_READ;
+        }
+
     }
     else if (state == TS_READ) {
         uint8_t c1, c2;
-        mfm_decode_twobyte(bits, &c1, &c2);
+        mfm_decode_twobyte(bits ^ inverted, &c1, &c2);
         rx_fec_buf[rx_fec_index++] = c1;
         if (rx_fec_index < rx_fec_buf.size()) {
             rx_fec_buf[rx_fec_index++] = c2;
@@ -328,7 +389,9 @@ reader_state_t sector_mfm_reader(reader_state_t state, uint32_t bits)
             return TS_READ;
         }
         else {
+#if LOOPBACK_TEST
             fuckup_sector_data();
+#endif
             int res = correct_sector_data();
             if (res == -1) {
                 return TS_TERMINATE;
@@ -345,11 +408,14 @@ reader_state_t sector_mfm_reader(reader_state_t state, uint32_t bits)
 // about received data
 void core1_entry()
 {
+    printf("core1_entry\n");
     rx_prev_sector_num = -1;
+    //read_loop_delaylocked(sector_mfm_reader);
     read_loop_delaylocked(sector_mfm_reader);
+    //read_loop_simple(debugbuf_reader);
 }
 
-void bitstream_test() {
+void bitstream_test(int mode) {
     // load pio programs
     // tx program loads 32-bit words and sends them 1 bit at a time every 8 clock cycles
     uint offset_tx = pio_add_program(pio, &bitstream_tx_program);
@@ -365,8 +431,8 @@ void bitstream_test() {
     bitstream_tx_program_init(pio, sm_tx, offset_tx, GPIO_WRHEAD, clkdiv);
     bitstream_rx_program_init(pio, sm_rx, offset_rx, GPIO_RDHEAD, clkdiv);
 
-    pio_sm_set_enabled(pio, sm_tx, true);
-    pio_sm_set_enabled(pio, sm_rx, true);
+    if (mode & BS_TX) pio_sm_set_enabled(pio, sm_tx, true);
+    if (mode & BS_RX) pio_sm_set_enabled(pio, sm_rx, true);
 
     uint8_t mfm_prev_bit;
 
@@ -384,7 +450,7 @@ void bitstream_test() {
     pio_sm_clear_fifos(pio, sm_rx);
 
     // launch the receiver in core1
-    multicore_launch_core1(core1_entry);
+    if (mode & BS_RX) multicore_launch_core1(core1_entry);
 
     // wait for the core to launch
     sleep_ms(10);
@@ -396,39 +462,52 @@ void bitstream_test() {
     // mark time to calculate effective payload CPS
     start_time = time_us_64();
 
-    // encode the blocks and send them out
-    for (size_t input_ofs = 0; input_ofs < psz; input_ofs += payload_data_sz) {
-        int data_sz = std::min(psz - input_ofs, payload_data_sz);
+    if (mode & BS_TX) {
+        // encode the blocks and send them out
+        for (size_t input_ofs = 0; input_ofs < psz; input_ofs += payload_data_sz) {
+            int data_sz = std::min(psz - input_ofs, payload_data_sz);
 
-        // use '#' as a EOF marker
-        if (data_sz + input_ofs >= psz) {
-            tx_sector_buf.reserved2 = '#';
+            // use '#' as a EOF marker
+            if (data_sz + input_ofs >= psz) {
+                tx_sector_buf.reserved2 = '#';
+            }
+
+            encode_block(rs_tx, plaintext + input_ofs, data_sz, &tx_sector_buf, tx_fec_buf.begin());
+
+            // leader serves for tuning up the DLL, it also creates a time gap
+            // for the rx to decode previous block
+            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+            // mfm sync word
+            pio_sm_put_blocking(pio, sm_tx, MFM_SYNC);
+
+            for (size_t i = 0; i < tx_fec_buf.size(); i += 2) {
+                uint32_t mfm_encoded = mfm_encode_twobyte(tx_fec_buf[i], 
+                        tx_fec_buf[i + 1], &mfm_prev_bit);
+                pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
+            }
+
+            if (!(mode & BS_RX)) {
+                printf("wrote sector %d crc %04x\n", tx_sector_buf.sector_num, tx_sector_buf.crc16);
+            }
+
+            // advance sector and block numbers
+            ++tx_sector_buf.block_num;
+            ++tx_sector_buf.sector_num;
         }
-
-        encode_block(rs_tx, plaintext + input_ofs, data_sz, &tx_sector_buf, tx_fec_buf.begin());
-
-        // leader serves for tuning up the DLL, it also creates a time gap
-        // for the rx to decode previous block
-        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-        // mfm sync word
-        pio_sm_put_blocking(pio, sm_tx, MFM_SYNC);
-
-        for (size_t i = 0; i < tx_fec_buf.size(); i += 2) {
-            uint32_t mfm_encoded = mfm_encode_twobyte(tx_fec_buf[i], 
-                    tx_fec_buf[i + 1], &mfm_prev_bit);
-            pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
-        }
-
-        // advance sector and block numbers
-        ++tx_sector_buf.block_num;
-        ++tx_sector_buf.sector_num;
     }
 
-    // wait for the message from the receiver before shutting down
-    multicore_fifo_pop_blocking();
+    if (mode & BS_RX) {
+        if (!(mode & BS_TX)) {
+            printf("waiting for rx\n");
+        }
+        // wait for the message from the receiver before shutting down
+        //multicore_fifo_pop_blocking();
+        uint32_t out;
+        multicore_fifo_pop_timeout_us(120ULL*1000000ULL, &out);
+    }
 
     end_time = time_us_64();
 
@@ -438,8 +517,19 @@ void bitstream_test() {
     printf("elapsed time=%dms, speed=%dcps\n", timediff_ms,
             psz/timediff_s);
 
-    // shut down core1
-    multicore_reset_core1();
+    if (mode & BS_RX) {
+        // shut down core1
+        multicore_reset_core1();
+    }
+
+#if 0
+    printf("---debug sample begin---\n");
+    for (int i = 0; i < debugbuf.size(); ++i) {
+        printf("%02x ", debugbuf[i]);
+        if ((i + 1) % 16 == 0) printf("\n");
+    }
+    printf("---debug sample end---\n");
+#endif
 
     // shut down PIO
     pio_sm_set_enabled(pio, sm_tx, false);

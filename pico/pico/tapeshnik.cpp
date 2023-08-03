@@ -95,8 +95,6 @@ void freq_stop()
     gpio_set_function(GPIO_WRHEAD, GPIO_FUNC_NULL);
 }
 
-//extern "C" { void bitstream_test(); }
-
 int main() {
     stdio_init_all();
 
@@ -147,6 +145,11 @@ int main() {
             case '3': freq_8(30000);
                       break;
             case '5': bitstream_test();
+                      break;
+            case 'w': bitstream_test(BS_TX);
+                      break;
+            case 'l': bitstream_test(BS_RX);
+                      break;
             case 10:
             case 13:
                       printf("\nHelp: m=motor, p=play, f=ff, r=rew, space=stop, 0=zero counter\n");
