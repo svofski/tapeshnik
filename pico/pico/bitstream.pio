@@ -1,6 +1,18 @@
+    ; epic transmitter program: output at 1/8 clock
 .program bitstream_tx
-    out pins, 1       
+    .wrap_target
+    out pins, 1 [7]     ; push one bit, delay 7 cycles
+    .wrap
     ; end of epic program
+
+    ; epic receiver program
+    ; outputs full word every bit (pull threshold 1)
+.program bitstream_rx
+    .wrap_target
+    in pins, 1          ; sample pin, autopush word
+    .wrap
+    ; end of epic receiver
+    
 
 % c-sdk {
 static inline void bitstream_tx_program_init(PIO pio, uint sm, uint offset, 
@@ -20,8 +32,29 @@ static inline void bitstream_tx_program_init(PIO pio, uint sm, uint offset,
     pio_sm_init(pio, sm, offset, &c);
 
     // Execute a blocking pull so that we maintain the initial line state until data is available
-    pio_sm_exec(pio, sm, pio_encode_pull(false, true));
+    //pio_sm_exec(pio, sm, pio_encode_pull(false, true));
     pio_sm_set_enabled(pio, sm, true);
 }
 %}
 
+
+% c-sdk {
+static inline void bitstream_rx_program_init(PIO pio, uint sm, uint offset, 
+    uint pin, float div) {
+
+    // reset output pin to 0
+    //pio_sm_set_pins_with_mask(pio, sm, 0, 1u << pin); 
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, /*pin_count*/1, /*is_out*/false);
+    pio_gpio_init(pio, pin);
+
+    pio_sm_config c = bitstream_rx_program_get_default_config(offset);
+    sm_config_set_in_shift(&c, /*shift_right*/ false, /*autopull*/ true,
+        /*pull_threshold*/ 1);
+    sm_config_set_in_pins(&c, pin);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_clkdiv(&c, div);
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

@@ -3,7 +3,8 @@ add_executable(tapeshnik
         debounce.cpp
         tacho.cpp
         wheel.cpp
-        bitstream.c
+        bitstream.cpp
+        plaintext.cpp
         )
 
 pico_generate_pio_header(tapeshnik ${CMAKE_CURRENT_LIST_DIR}/bitstream.pio)

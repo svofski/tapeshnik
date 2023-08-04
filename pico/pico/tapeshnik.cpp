@@ -13,6 +13,7 @@
 #include "wheel.h"
 #include "mainloop.h"
 #include "tacho.h"
+#include "bitstream.h"
 
 #define ML_NO_REQUEST   0
 #define ML_STOP_REQUEST ' '
@@ -94,7 +95,7 @@ void freq_stop()
     gpio_set_function(GPIO_WRHEAD, GPIO_FUNC_NULL);
 }
 
-extern "C" { void bitstream_test(); }
+//extern "C" { void bitstream_test(); }
 
 int main() {
     stdio_init_all();
