@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <cstdint>
 #include <array>
+#include <algorithm>
+#include <string>
 
 #include "pico/stdlib.h"
 #include "pico/time.h"
@@ -15,7 +17,11 @@
 #include "hardware/pio.h"
 #include "bitstream.pio.h"
 
+#include "correct.h"
+
 #include "config.h"
+
+#define MFM_FREQ 10000 // max frequency at output
 
 #define  Kp     0.093
 #define  Ki     0.000137
@@ -28,7 +34,7 @@
 const uint16_t MFM_SYNC_A1 = 0x4489;// 0100,0100,1000,1001
 const uint32_t MFM_SYNC = 0x55554489;  // prefixed with leader 01010101...
 
-const char * get_plaintext();
+const unsigned char * get_plaintext();
 size_t get_plaintext_size();
 
 
@@ -41,8 +47,72 @@ uint32_t mfm_bits = 0;
 int mfm_period = 8;
 int mfm_midperiod = mfm_period / 2;
 
+int64_t start_time, end_time;
 
-uint32_t start_time, end_time;
+// error correction
+constexpr size_t block_length = 255;
+constexpr size_t min_distance = 32;
+constexpr size_t message_length = block_length - min_distance;
+
+//uint8_t input_buf[255];
+correct_reed_solomon * rs_tx;
+correct_reed_solomon * rs_rx;
+
+constexpr size_t payload_data_sz = 200;
+
+// sector payload: 1 + 1 + 2 + 12 + 4 + 200 + 2 + 1 = 223 bytes
+struct sector_payload_t { 
+    uint8_t   track_num;
+    uint8_t   sector_num_msb;
+    uint16_t  sector_num;
+    uint8_t   filename[12];
+    uint32_t  block_num;
+    uint8_t   data[payload_data_sz];
+    uint16_t  crc16;
+    uint8_t   reserved2;
+} __attribute__((packed));
+
+sector_payload_t tx_sector_buf;
+
+// tx buffer for feck (+1 pad to 256 for easier encoding)
+std::array<uint8_t, block_length + 1> tx_fec_buf;
+
+// raw data are read in this buffer
+std::array<uint8_t, block_length> rx_fec_buf;
+size_t rx_fec_index;
+
+// rs decoded sector payload
+sector_payload_t rx_sector_buf;
+int32_t rx_prev_sector_num;
+
+uint16_t calculate_crc(const uint8_t * data, size_t len)
+{
+    uint16_t result = 0;
+    for (size_t i = 0; i < len; ++i) {
+        result = i ^ (result + data[i]);
+    }
+    return result;
+}
+
+// encode raw payload (223 bytes) to 255-byte output buffer
+// sector_buf points to sector_payload_t with other fields filled in
+// encoded_buf is the output buffer which is 255 bytes long
+size_t encode_block(correct_reed_solomon * rs, const uint8_t * data, size_t data_sz, 
+        sector_payload_t * sector_buf, uint8_t * encoded_buf)
+{
+    std::copy(data, data + std::min(payload_data_sz, data_sz), sector_buf->data);
+
+    // make sure that block remainder is empty
+    std::fill(sector_buf->data + data_sz, sector_buf->data + payload_data_sz, 0);
+
+    sector_buf->crc16 = calculate_crc(sector_buf->data, payload_data_sz);
+
+    const uint8_t * sector_bytes = reinterpret_cast<uint8_t *>(sector_buf);
+    return correct_reed_solomon_encode(rs, sector_bytes, message_length, encoded_buf);
+}
+
+
+// --- MFM ----
 
 // 8 bits -> 16 mfm-bits, returns last bit 
 uint32_t mfm_encode_twobyte(uint8_t c1, uint8_t c2, uint8_t *prev_bit)
@@ -135,13 +205,14 @@ uint32_t mfm_track_simple(mfm_callback_t cb)
         prev = cur;
     }
 
+    multicore_fifo_push_blocking(TS_TERMINATE);
+
     return 0;
 }
 
 uint32_t mfm_track_pid(mfm_callback_t cb)
 {
-    int last_acc = 0;
-    int lastbit = 0;
+    uint32_t lastbit = 0;
     int phase_delta = 0;
     int phase_delta_filtered = 0;
     int integ = 0;
@@ -210,6 +281,8 @@ uint32_t mfm_track_pid(mfm_callback_t cb)
         }
     }
 
+    multicore_fifo_push_blocking(TS_TERMINATE);
+
     return 0;
 }
 
@@ -218,7 +291,7 @@ mfm_track_state_t simple_mfm_reader(mfm_track_state_t state, uint32_t bits)
 {
     if (state == TS_RESYNC) {
         if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
-            start_time = time_us_32();
+            start_time = time_us_64();
             return TS_READ;
         }
     }
@@ -232,8 +305,91 @@ mfm_track_state_t simple_mfm_reader(mfm_track_state_t state, uint32_t bits)
     return state;
 }
 
+// reed-solomon will recover up to min_distance / 2 byte errors
+void fuckup_sector_data()
+{
+    constexpr int maxfuck = min_distance / 2 + /* unrecoverable errors: */ 0;
+    for (int i = 0; i < maxfuck; ++i) {
+        ssize_t ofs = rand() % rx_fec_buf.size();
+        rx_fec_buf[ofs] ^= rand() & 0xff;
+    }
+}
+
+int correct_sector_data()
+{
+    uint8_t * rx_ptr = reinterpret_cast<uint8_t *>(&rx_sector_buf);
+    ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, rx_fec_buf.begin(),
+            rx_fec_buf.size(), rx_ptr);
+    if (decoded_sz <= 0) {
+        std::copy_n(rx_fec_buf.begin(), sizeof(rx_sector_buf), rx_ptr);
+        printf("\n\n--- unrecoverable error in sector %d  ---\n", 
+                (rx_sector_buf.sector_num_msb << 16) | rx_sector_buf.sector_num);
+    }
+    if (rx_sector_buf.sector_num != rx_prev_sector_num + 1) {
+        printf("\n\n--- sector out of sequence; previous: %d current: %d\n\n", 
+                rx_prev_sector_num, rx_sector_buf.sector_num);
+    }
+
+    uint16_t crc = calculate_crc(&rx_sector_buf.data[0], payload_data_sz);
+
+    std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.filename[0]), 12);
+    printf("sector %d; file: '%s' block: %d crc: actual: %04x expected: %04x %s\n", 
+            (rx_sector_buf.sector_num_msb << 16) | rx_sector_buf.sector_num,
+            filename.c_str(),
+            rx_sector_buf.block_num,
+            crc, rx_sector_buf.crc16,
+            (crc == rx_sector_buf.crc16) ? "OK" : "CRC ERROR"
+            );
+
+    //for (size_t i = 0; i < payload_data_sz; ++i) {
+    //    putchar(rx_sector_buf.data[i]);
+    //}
+
+    rx_prev_sector_num = rx_sector_buf.sector_num;
+
+    if (rx_sector_buf.reserved2 == '#') {
+        printf("\nEOF\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+mfm_track_state_t sector_mfm_reader(mfm_track_state_t state, uint32_t bits)
+{
+    if (state == TS_RESYNC) {
+        if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
+            rx_fec_index = 0;
+            return TS_READ;
+        }
+    }
+    else if (state == TS_READ) {
+        uint8_t c1, c2;
+        mfm_decode_twobyte(bits, &c1, &c2);
+        rx_fec_buf[rx_fec_index++] = c1;
+        if (rx_fec_index < rx_fec_buf.size()) {
+            rx_fec_buf[rx_fec_index++] = c2;
+        }
+        if (rx_fec_index < rx_fec_buf.size()) {
+            return TS_READ;
+        }
+        else {
+            fuckup_sector_data();
+            int res = correct_sector_data();
+            if (res == -1) {
+                return TS_TERMINATE;
+            }
+            else {
+                return TS_RESYNC;
+            }
+        }
+    }
+    return state;
+}
+
+
 // try running it on core1?
-uint32_t mfm_wait_sync(PIO pio, uint sm_rx, uint16_t sync16, int max_bits)
+uint32_t mfm_wait_sync(PIO pio, uint sm_rx, uint16_t sync16, uint32_t max_bits)
 {
     uint32_t prev = 0;
     int sample_t = 0;
@@ -299,21 +455,8 @@ uint32_t mfm_recv32(PIO pio, uint sm_rx)
 
 void core1_entry()
 {
-//    uint32_t rxsync;
-//    do {
-//        rxsync = mfm_wait_sync(pio, sm_rx, MFM_SYNC_A1, 1024);
-//    } while ((rxsync & 0xffff) != MFM_SYNC_A1);
-//
-//    uint8_t c1, c2;
-//    mfm_decode_twobyte(rxsync, &c1, &c2);
-//    printf("rxsync=$%x (%02x %02x)\n", rxsync, c1, c2);
-//    for(;;) {
-//        uint32_t tb = mfm_recv32(pio, sm_rx);
-//        mfm_decode_twobyte(tb, &c1, &c2);
-//        putchar(c1);
-//        putchar(c2);
-//    }
-    mfm_track_pid(simple_mfm_reader);
+    rx_prev_sector_num = -1;
+    mfm_track_pid(sector_mfm_reader);
 }
 
 void bitstream_test() {
@@ -323,13 +466,10 @@ void bitstream_test() {
     printf("Receive program loaded at %d\n", offset_rx);
 
     // Configure state machines, push bits out at 8000 bps (max freq 4000hz)
-    float clkdiv_max = 125e6/((8000 - 1200) * 8);
-    float clkdiv_min = 125e6/((8000 + 1200) * 8);
-    float clkdiv = 125e6/(8000 * 8);
-    float dclkdiv = 100;
+    float clkdiv = 125e6/(MFM_FREQ * 2 * 8);
 
     bitstream_tx_program_init(pio, sm_tx, offset_tx, GPIO_WRHEAD, clkdiv);
-    bitstream_rx_program_init(pio, sm_rx, offset_rx, GPIO_RDHEAD, 125e6/(8000 * 8));
+    bitstream_rx_program_init(pio, sm_rx, offset_rx, GPIO_RDHEAD, clkdiv);
 
     pio_sm_set_enabled(pio, sm_tx, true);
     pio_sm_set_enabled(pio, sm_rx, true);
@@ -338,8 +478,14 @@ void bitstream_test() {
 
     printf("getting plaintext\n");
     size_t psz = get_plaintext_size();
-    const char * plaintext = get_plaintext();
+    const unsigned char * plaintext = get_plaintext();
     printf("got plaintext\n");
+
+    // initialize forward error correction
+    rs_tx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
+                1, 1, min_distance);
+    rs_rx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
+                1, 1, min_distance);
 
     pio_sm_clear_fifos(pio, sm_rx);
 
@@ -349,34 +495,45 @@ void bitstream_test() {
     // wait for the core to launch
     sleep_ms(10);
 
-    printf("SEND MFM_SYNC %u\n", time_us_32());
-    pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-    pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-    pio_sm_put_blocking(pio, sm_tx, MFM_SYNC);
-    for(size_t i = 0; i < psz; i += 2) {
-        uint32_t mfm_encoded = mfm_encode_twobyte(plaintext[i], plaintext[i + 1],
-                &mfm_prev_bit);
+    tx_sector_buf = {};
+    std::copy_n(std::string("alice.txt  ").begin(), 12, &tx_sector_buf.filename[0]);
+    tx_sector_buf.reserved2 = '*';
 
-        clkdiv = clkdiv + dclkdiv;
-        if (clkdiv >= clkdiv_max) {
-            clkdiv = clkdiv_max;
-            dclkdiv = -dclkdiv;
-            //printf("\nMAX\n");
-        }
-        else if (clkdiv <= clkdiv_min) {
-            clkdiv = clkdiv_min;
-            dclkdiv = -dclkdiv;
-            //printf("\nMIN\n");
-        }
-        pio_sm_set_clkdiv(pio, sm_tx, clkdiv);
+    start_time = time_us_64();
 
-        pio_sm_put_blocking(pio, sm_tx, mfm_encoded); // 32*8 = 256 cycles
+    // make 200-byte long blocks
+    for (size_t input_ofs = 0; input_ofs < psz; input_ofs += payload_data_sz) {
+        int data_sz = std::min(psz - input_ofs, payload_data_sz);
+
+        if (data_sz + input_ofs >= psz) {
+            tx_sector_buf.reserved2 = '#';
+        }
+
+        size_t encoded_len = encode_block(rs_tx, plaintext + input_ofs,
+                data_sz, &tx_sector_buf, tx_fec_buf.begin());
+
+        // this also creates a gap for the rx to decode everything
+        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+        pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+        pio_sm_put_blocking(pio, sm_tx, MFM_SYNC);
+
+        for (size_t i = 0; i < tx_fec_buf.size(); i += 2) {
+            uint32_t mfm_encoded = mfm_encode_twobyte(tx_fec_buf[i], 
+                    tx_fec_buf[i + 1], &mfm_prev_bit);
+            pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
+        }
+
+
+        ++tx_sector_buf.block_num;
+        ++tx_sector_buf.sector_num;
     }
 
-    // let the receiver finish before shutting down
-    sleep_ms(250);
+    // wait for the message from the receiver before shutting down
+    multicore_fifo_pop_blocking();
 
-    end_time = time_us_32();
+    end_time = time_us_64();
 
     uint32_t timediff = end_time - start_time;
     uint32_t timediff_ms = timediff / 1000;
