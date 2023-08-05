@@ -10,7 +10,12 @@ add_executable(tapeshnik
 pico_generate_pio_header(tapeshnik ${CMAKE_CURRENT_LIST_DIR}/bitstream.pio)
 
 # pull in common dependencies
-target_link_libraries(tapeshnik pico_stdlib hardware_pwm hardware_pio correct_static)
+target_link_libraries(tapeshnik 
+    pico_stdlib
+    pico_multicore
+    hardware_pwm
+    hardware_pio
+    correct_static)
 
 pico_enable_stdio_usb(tapeshnik  1)
 pico_enable_stdio_uart(tapeshnik 0)
