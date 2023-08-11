@@ -1,7 +1,7 @@
     ; epic transmitter program: output at 1/8 clock
 .program bitstream_tx
     .wrap_target
-    out pins, 1 [7]     ; push one bit, delay 7 cycles
+    out pins, 1 [7]     ; push one bit, delay 15 cycles
     .wrap
     ; end of epic program
 

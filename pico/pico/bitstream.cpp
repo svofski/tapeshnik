@@ -19,16 +19,21 @@
 #include "mfm.h"
 
 
-#define MFM_FREQ 3500 // max frequency at output
+#define MFM_FREQ 10000//3300 // max frequency at output
 
 #define  Kp     0.0333
 #define  Ki     0.000001
 #define  alpha  0.1
 
 
-//MFM_SYNC = [01,00,01,00,10,00,10,01]
-const uint16_t MFM_SYNC_A1 = 0x4489;// 0100,0100,1000,1001
-const uint32_t MFM_SYNC = 0x55554489;  // prefixed with leader 01010101...
+#define modulate    fm_encode_twobyte
+#define demodulate  fm_decode_twobyte
+
+const uint32_t LEADER = 0xAAAAAAAA;
+const uint32_t SYNC   = 0xAAA1A1A1;
+
+//const uint16_t MFM_SYNC_A1 = 0x78f1;
+//const uint32_t MFM_SYNC = 0x1e1e78f1; // A1, level = 1, bit = 1
 
 const unsigned char * get_plaintext();
 size_t get_plaintext_size();
@@ -39,9 +44,11 @@ PIO pio = pio0;
 uint sm_tx = 0, sm_rx = 1;
 
 // mfm read shift register
-uint32_t mfm_bits = 0;
-int mfm_period = 8;
-int mfm_midperiod = mfm_period / 2;
+uint64_t mfm_bits = 0;
+constexpr int mfm_period = 8;
+constexpr int mfm_midperiod = mfm_period / 2;
+
+uint8_t mfm_prev_level;
 
 int64_t start_time, end_time;
 
@@ -52,14 +59,13 @@ constexpr size_t block_length = 255;
 constexpr size_t min_distance = 32;
 constexpr size_t message_length = block_length - min_distance;
 
-//uint8_t input_buf[255];
 correct_reed_solomon * rs_tx;
 correct_reed_solomon * rs_rx;
 
 constexpr size_t payload_data_sz = 200;
 
 size_t debugbuf_index = 0;
-std::array<uint8_t, 20000> debugbuf;
+std::array<uint8_t, 100000> debugbuf;
 
 // sector payload: 1 + 1 + 2 + 12 + 4 + 200 + 2 + 1 = 223 bytes
 struct sector_payload_t { 
@@ -85,6 +91,11 @@ size_t rx_fec_index;
 // rs decoded sector payload
 sector_payload_t rx_sector_buf;
 int32_t rx_prev_sector_num;
+
+uint32_t sample_one_bit()
+{
+    return pio_sm_get_blocking(pio, sm_rx); // take next sample
+}
 
 uint16_t calculate_crc(uint8_t * data, size_t len)
 {
@@ -130,15 +141,44 @@ uint32_t read_loop_simple(reader_callback_t cb)
 
     for (; state != TS_TERMINATE;) {
         uint32_t cur = pio_sm_get_blocking(pio, sm_rx);
-        if (cur != prev) {
+        ++sample_t;
+        if (sample_t == mfm_period) {
             sample_t = 0;
         }
-        else {
-            ++sample_t;
-            if (sample_t == mfm_period) {
-                sample_t = 0;
+
+        if (state == TS_RESYNC) {
+            if (cur != prev) {
+                int dist_mid = abs(sample_t) - mfm_midperiod;
+                int dist_0 = abs(sample_t);
+                int dist_p = abs(mfm_period - sample_t);
+
+                if (dist_0 < dist_mid || dist_p < dist_mid) {
+                    sample_t = 0;
+                }
+                else {
+                    sample_t = mfm_midperiod;
+                }
             }
         }
+        else {
+            if (cur != prev) {
+                int dist_mid = abs(sample_t) - mfm_midperiod;
+                int dist_0 = abs(sample_t);
+                int dist_p = abs(mfm_period - sample_t);
+
+                if (dist_0 < dist_mid) {
+                    sample_t = std::max(0, sample_t - 1);
+                }
+                if (dist_p < dist_mid) {
+                    sample_t += 1;
+                    if (sample_t >= mfm_period) {
+                        sample_t -= mfm_period;
+                    }
+                }
+            }
+        }
+
+        
 
         if (sample_t == mfm_midperiod) {
             // take sample hopefully in the middle 
@@ -163,7 +203,68 @@ uint32_t read_loop_simple(reader_callback_t cb)
         prev = cur;
     }
 
-    multicore_fifo_push_blocking(TS_TERMINATE);
+    return 0;
+}
+
+
+// fixed timing reader with callback
+uint32_t read_loop_naiive(reader_callback_t cb)
+{
+    uint32_t prev = 0;
+    int sample_t = 0;
+    int bitcount = 0;
+
+    reader_state_t state = TS_RESYNC;
+
+    const int shortpulse = mfm_period;
+    for (; state != TS_TERMINATE;) {
+        uint32_t cur = sample_one_bit();
+        if (cur & 0x80000000) {
+            break;
+        }
+
+        ++sample_t;
+
+        // flip
+        if (cur != prev) {
+            // the long pulses are only present in sync
+            if (sample_t > 7 * shortpulse / 2) {// 3.5 pulse
+                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
+                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
+                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
+            }                                                
+            else if (sample_t > 5 * shortpulse / 2) { // 2.5 pulse
+                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
+                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
+            }
+            else if (sample_t > 3 * shortpulse / 2) { // 1.5 pulse
+                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
+            }
+
+            mfm_bits = (mfm_bits << 1) | cur; ++bitcount;
+
+            sample_t = 0;
+        }
+
+        switch (state) {
+            case TS_RESYNC:
+                state = cb(state, mfm_bits);
+                if (state == TS_READ) putchar('#');
+                bitcount = 0;
+                break;
+            case TS_READ:
+                if (bitcount >= 32) {
+                    int s = bitcount - 32;
+                    state = cb(state, mfm_bits >> s);
+                    bitcount -= 32;
+                }
+                break;
+            case TS_TERMINATE:
+                break;
+        }
+
+        prev = cur;
+    }
 
     return 0;
 }
@@ -196,12 +297,14 @@ uint32_t read_loop_delaylocked(reader_callback_t cb)
     int rawcnt = 0;   // raw sample count for debugbuffa
     uint32_t rawsample = 0;
 
+    printf("read_loop_delaylocked\n");
     reader_state_t state = TS_RESYNC;
 
     for (; state != TS_TERMINATE;) {
-        uint32_t bit = pio_sm_get_blocking(pio, sm_rx); // take next sample
-        rawsample = (rawsample << 1) | bit;
+        uint32_t bit = sample_one_bit();
+
         if (debugbuf_index < debugbuf.size()) {
+            rawsample = (rawsample << 1) | bit;
             if (++rawcnt == 8) {
                 rawcnt = 0;
                 debugbuf[debugbuf_index++] = 0xff & rawsample;
@@ -235,10 +338,6 @@ uint32_t read_loop_delaylocked(reader_callback_t cb)
             switch (state) {
                 case TS_RESYNC:
                     state = cb(state, mfm_bits);
-                    //if (++bitcount >= 128) {
-                    //    bitcount = 0;
-                    //    printf("[%d]", ftw);
-                    //}
                     if (state == TS_READ) {
                         bitcount = 0;
                     }
@@ -255,8 +354,6 @@ uint32_t read_loop_delaylocked(reader_callback_t cb)
         }
     }
 
-    multicore_fifo_push_blocking(TS_TERMINATE);
-
     return 0;
 }
 
@@ -265,22 +362,22 @@ reader_state_t simple_mfm_reader(reader_state_t state, uint32_t bits)
 {
     if (state == TS_RESYNC) {
         //printf("%x\n", bits);
-        if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
+        if (mfm_bits == SYNC) {
             start_time = time_us_64();
-            printf("SYNC\n");
+            //printf("SYNC\n");
             inverted = 0;
             return TS_READ;
         }
-        if (((~mfm_bits) & 0xffff) == MFM_SYNC_A1) {
+        if (~mfm_bits == SYNC) {
             start_time = time_us_64();
-            printf("SYNC INV\n");
+            //printf("SYNC INV\n");
             inverted = 0xffffffff;
             return TS_READ;
         }
     }
     else if (state == TS_READ) {
         uint8_t c1, c2;
-        mfm_decode_twobyte(bits ^ inverted, &c1, &c2);
+        demodulate(bits ^ inverted, &c1, &c2, &mfm_prev_level);
         putchar(c1);
         putchar(c2);
         return TS_READ;
@@ -360,27 +457,29 @@ int correct_sector_data()
     return 0;
 }
 
-// mfm sector reader callback
+// sector reader callback
 reader_state_t sector_mfm_reader(reader_state_t state, uint32_t bits)
 {
     if (state == TS_RESYNC) {
-        if ((mfm_bits & 0xffff) == MFM_SYNC_A1) {
+        if (bits  == SYNC) {
             rx_fec_index = 0;
-            printf("\nSYNC\n");
+            //printf("\nSYNC %08x\n", bits);
             inverted = 0x0;
+            mfm_prev_level = 1;
             return TS_READ;
         }
-        else if (((~mfm_bits) & 0xffff) == MFM_SYNC_A1) {
+        else if (~bits == SYNC) {
             rx_fec_index = 0;
-            printf("\nSYNC INV\n");
+            //printf("\nSYNC INV %08x\n", bits);
             inverted = 0xffffffff;
+            mfm_prev_level = 0;
             return TS_READ;
         }
 
     }
     else if (state == TS_READ) {
         uint8_t c1, c2;
-        mfm_decode_twobyte(bits ^ inverted, &c1, &c2);
+        demodulate(bits ^ inverted, &c1, &c2, &mfm_prev_level);
         rx_fec_buf[rx_fec_index++] = c1;
         if (rx_fec_index < rx_fec_buf.size()) {
             rx_fec_buf[rx_fec_index++] = c2;
@@ -410,12 +509,49 @@ void core1_entry()
 {
     printf("core1_entry\n");
     rx_prev_sector_num = -1;
-    //read_loop_delaylocked(sector_mfm_reader);
     read_loop_delaylocked(sector_mfm_reader);
-    //read_loop_simple(debugbuf_reader);
+    //read_loop_simple(sector_mfm_reader);
+    //read_loop_naiive(sector_mfm_reader);
+
+    multicore_fifo_push_blocking(TS_TERMINATE);
 }
 
-void bitstream_test(int mode) {
+void sanity_check()
+{
+    uint8_t cur_level = 0, prev_bit = 0;
+    uint32_t mfmbits = modulate(0x55,0xa1, &cur_level, &prev_bit);
+    for (int i = 0; i < 32; ++i) {
+        putchar('0' + ((mfmbits >> (31-i)) & 1));
+    }
+    printf(" %08x %08x\n", mfmbits, ~mfmbits);
+
+    uint8_t c1, c2;
+    uint8_t prev_level = 0;
+    mfm_decode_twobyte(mfmbits, &c1, &c2, &prev_level);
+    printf("decoded: %02x %02x\n", c1, c2);
+}
+
+void insanity_check()
+{
+    uint8_t cur_level = 0, prev_bit = 0;
+    uint32_t fmbits = fm_encode_twobyte(0x55,0xa1, &cur_level, &prev_bit);
+    for (int i = 0; i < 32; ++i) {
+        putchar('0' + ((fmbits >> (31-i)) & 1));
+    }
+    printf(" %08x %08x\n", fmbits, ~fmbits);
+
+    uint8_t c1, c2;
+    uint8_t prev_level = 0;
+    fm_decode_twobyte(fmbits, &c1, &c2, &prev_level);
+    printf("decoded: %02x %02x\n", c1, c2);
+}
+
+void bitstream_test(int mode)
+{
+    sanity_check();
+    insanity_check();
+    debugbuf_index = 0;
+
     // load pio programs
     // tx program loads 32-bit words and sends them 1 bit at a time every 8 clock cycles
     uint offset_tx = pio_add_program(pio, &bitstream_tx_program);
@@ -426,7 +562,7 @@ void bitstream_test(int mode) {
     printf("Receive program loaded at %d\n", offset_rx);
 
     // Configure state machines, push bits out at 8000 bps (max freq 4000hz)
-    constexpr float clkdiv = 125e6/(MFM_FREQ * 2 * 8);
+    constexpr float clkdiv = 125e6/(MFM_FREQ * 2 * mfm_period);
 
     bitstream_tx_program_init(pio, sm_tx, offset_tx, GPIO_WRHEAD, clkdiv);
     bitstream_rx_program_init(pio, sm_rx, offset_rx, GPIO_RDHEAD, clkdiv);
@@ -434,7 +570,7 @@ void bitstream_test(int mode) {
     if (mode & BS_TX) pio_sm_set_enabled(pio, sm_tx, true);
     if (mode & BS_RX) pio_sm_set_enabled(pio, sm_rx, true);
 
-    uint8_t mfm_prev_bit;
+    uint8_t mfm_cur_level = 0, mfm_prev_bit = 0;
 
     // load plaintext data
     size_t psz = get_plaintext_size();
@@ -442,10 +578,14 @@ void bitstream_test(int mode) {
     printf("plaintext size: %lu bytes\n", psz);
 
     // initialize forward error correction
-    rs_tx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
+    if (mode & BS_TX) {
+        rs_tx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
                 1, 1, min_distance);
-    rs_rx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
+    }
+    if (mode & BS_RX) {
+        rs_rx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
                 1, 1, min_distance);
+    }
 
     pio_sm_clear_fifos(pio, sm_rx);
 
@@ -474,18 +614,32 @@ void bitstream_test(int mode) {
 
             encode_block(rs_tx, plaintext + input_ofs, data_sz, &tx_sector_buf, tx_fec_buf.begin());
 
+            // add a leader before the first block
+            if (tx_sector_buf.block_num == 0) {
+                for (int i = 0; i < 128; ++i) {
+                    pio_sm_put_blocking(pio, sm_tx, LEADER);
+                    pio_sm_put_blocking(pio, sm_tx, LEADER);
+                    pio_sm_put_blocking(pio, sm_tx, LEADER);
+                    pio_sm_put_blocking(pio, sm_tx, LEADER);
+                }
+            }
+
+
             // leader serves for tuning up the DLL, it also creates a time gap
             // for the rx to decode previous block
-            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
-            pio_sm_put_blocking(pio, sm_tx, 0x55555555);
+            pio_sm_put_blocking(pio, sm_tx, LEADER);
+            pio_sm_put_blocking(pio, sm_tx, LEADER);
+            pio_sm_put_blocking(pio, sm_tx, LEADER);
+            pio_sm_put_blocking(pio, sm_tx, LEADER);
+            pio_sm_put_blocking(pio, sm_tx, LEADER);
             // mfm sync word
-            pio_sm_put_blocking(pio, sm_tx, MFM_SYNC);
+            pio_sm_put_blocking(pio, sm_tx, SYNC);
+            mfm_cur_level = 1;
+            mfm_prev_bit = 1;
 
             for (size_t i = 0; i < tx_fec_buf.size(); i += 2) {
-                uint32_t mfm_encoded = mfm_encode_twobyte(tx_fec_buf[i], 
-                        tx_fec_buf[i + 1], &mfm_prev_bit);
+                uint32_t mfm_encoded = modulate(tx_fec_buf[i], 
+                        tx_fec_buf[i + 1], &mfm_cur_level, &mfm_prev_bit);
                 pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
             }
 
@@ -496,17 +650,31 @@ void bitstream_test(int mode) {
             // advance sector and block numbers
             ++tx_sector_buf.block_num;
             ++tx_sector_buf.sector_num;
+            
+#if SINGLE_SECTOR_TEST
+            break;// TEST
+#endif
         }
     }
 
+    int c;
     if (mode & BS_RX) {
         if (!(mode & BS_TX)) {
-            printf("waiting for rx\n");
+            printf("waiting for rx (press d to print sample dump)\n");
         }
         // wait for the message from the receiver before shutting down
         //multicore_fifo_pop_blocking();
         uint32_t out;
-        multicore_fifo_pop_timeout_us(120ULL*1000000ULL, &out);
+        for(int i = 0; i < 120*10; ++i) {
+            multicore_fifo_pop_timeout_us(100000ULL, &out); // 0.1s
+            if (out == TS_TERMINATE) {
+                break;
+            }
+            c = getchar_timeout_us(0); 
+            if (c != PICO_ERROR_TIMEOUT) {
+                break;
+            }
+        }
     }
 
     end_time = time_us_64();
@@ -522,13 +690,15 @@ void bitstream_test(int mode) {
         multicore_reset_core1();
     }
 
-#if 0
-    printf("---debug sample begin---\n");
-    for (int i = 0; i < debugbuf.size(); ++i) {
-        printf("%02x ", debugbuf[i]);
-        if ((i + 1) % 16 == 0) printf("\n");
+#if 1
+    if (c == 'd') {
+        printf("---debug sample begin---\n");
+        for (int i = 0; i < debugbuf.size(); ++i) {
+            printf("%02x ", debugbuf[i]);
+            if ((i + 1) % 16 == 0) printf("\n");
+        }
+        printf("---debug sample end---\n");
     }
-    printf("---debug sample end---\n");
 #endif
 
     // shut down PIO
@@ -537,4 +707,11 @@ void bitstream_test(int mode) {
     pio_remove_program(pio, &bitstream_tx_program, offset_tx);
     pio_remove_program(pio, &bitstream_rx_program, offset_rx);
     pio_clear_instruction_memory(pio);
+
+    if (mode & BS_TX) {
+        correct_reed_solomon_destroy(rs_tx);
+    }
+    if (mode & BS_RX) {
+        correct_reed_solomon_destroy(rs_rx);
+    }
 }
