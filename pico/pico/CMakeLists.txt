@@ -4,6 +4,8 @@ add_executable(tapeshnik
         tacho.cpp
         wheel.cpp
         bitstream.cpp
+        readloop.cpp
+        sectors.cpp
         plaintext.cpp
         crc.c
         mfm.cpp
