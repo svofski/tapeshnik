@@ -104,3 +104,14 @@ size_t get_plaintext_size()
 {
     return sizeof(plaintext);
 }
+
+static const char edit[] = R"(THE JUFFO-WUP IS STRONG IN THIS PLACE PERHAPS IF WE WERE TO PLANT SPORE SACS IN YOUR BRAIN ORGAN AND LET ITS TENDRILS SPREAD THROUGH YOUR FLESH THEN YOU WOULD TRULY UNDERSTAND JUFFO-WUP BECOME PART OF JUFFO-WUP)";
+
+const char * get_edittext() {
+    return &edit[0];
+}
+
+size_t get_edittext_size()
+{
+    return sizeof(edit);
+}

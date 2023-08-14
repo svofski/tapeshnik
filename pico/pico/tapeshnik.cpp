@@ -23,6 +23,7 @@ int mainloop_request = ML_NO_REQUEST;
 Motor motor(GPIO_MOTOR_CONTROL);
 Solenoid solenoid(GPIO_SOLENOID_CONTROL);
 Wheel wheel(motor, solenoid, GPIO_MODE_ENTRY);
+Bitstream bstream(GPIO_RDHEAD, GPIO_WRHEAD, GPIO_WREN);
 
 void request_wheel_stop()
 {
@@ -144,11 +145,13 @@ int main() {
                       break;
             case '3': freq_8(30000);
                       break;
-            case '5': bitstream_test();
+            case '5': bstream.test();
                       break;
-            case 'w': bitstream_test(BS_TX);
+            case 'w': bstream.test(BS_TX);
                       break;
-            case 'l': bitstream_test(BS_RX);
+            case 'l': bstream.test(BS_RX);
+                      break;
+            case 'e': bstream.test_sector_rewrite();
                       break;
             case 10:
             case 13:

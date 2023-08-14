@@ -16,7 +16,7 @@ static sector_layout_t tx_sector_buf;
 // todo: join with the buffer above, encode can work with that
 
 // tx buffer for feck (+1 pad to 256 for easier encoding)
-static std::array<uint8_t, fec_block_length + 1> tx_fec_buf;
+static std::array<uint8_t, 2*fec_block_length + 1> tx_fec_buf;
 
 // prepare sector for writing
 // returns number of bytes taken from data

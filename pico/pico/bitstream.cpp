@@ -20,33 +20,25 @@
 #include "crc.h"
 #include "mfm.h"
 
-
-#define MFM_FREQ 3300 // max frequency at output
-
-
+// current working version is FM
 #define modulate    fm_encode_twobyte
 #define demodulate  fm_decode_twobyte
 
+// not modulated, these words are written bit by bit
 const uint32_t LEADER = 0xAAAAAAAA;
 const uint32_t SYNC   = 0xAAA1A1A1;
 
-//const uint16_t MFM_SYNC_A1 = 0x78f1;
-//const uint32_t MFM_SYNC = 0x1e1e78f1; // A1, level = 1, bit = 1
-
 const unsigned char * get_plaintext();
 size_t get_plaintext_size();
+const unsigned char * get_edittext();
+size_t get_edittext_size();
 
 correct_reed_solomon * rs_rx = 0;
 
-// can we share one PIO between two cores?
 PIO pio = pio0;
 uint sm_tx = 0, sm_rx = 1;
 
-// mfm read shift register
-constexpr int mfm_period = 8;
-constexpr int mfm_midperiod = mfm_period / 2;
-
-uint8_t mfm_prev_level;
+uint8_t prev_level;
 
 int64_t start_time, end_time;
 
@@ -60,57 +52,13 @@ size_t rx_fec_index;
 sector_layout_t rx_sector_buf;
 int32_t rx_prev_sector_num;
 
+uint32_t bitsampler_or = 0;
+
 uint32_t bitsampler_pio()
 {
-    return pio_sm_get_blocking(pio, sm_rx); // take next sample
+    return bitsampler_or | pio_sm_get_blocking(pio, sm_rx); // take next sample
 }
 
-
-///// encode raw payload (223 bytes) to 255-byte output buffer
-///// sector_buf points to sector_layout_t with other fields filled in
-///// encoded_buf is the output buffer which is 255 bytes long
-///size_t encode_block(correct_reed_solomon * rs, const uint8_t * data, size_t data_sz, 
-///        sector_layout_t * sector_buf, uint8_t * encoded_buf)
-///{
-///    std::copy(data, data + std::min(payload_data_sz, data_sz), sector_buf->data);
-///
-///    // make sure that block remainder is empty
-///    std::fill(sector_buf->data + data_sz, sector_buf->data + payload_data_sz, 0);
-///
-///    sector_buf->crc16 = calculate_crc(sector_buf->data, payload_data_sz);
-///
-///    const uint8_t * sector_bytes = reinterpret_cast<uint8_t *>(sector_buf);
-///    return correct_reed_solomon_encode(rs, sector_bytes, fec_message_sz, encoded_buf);
-///}
-
-
-// basic mfm reader callback: expect MFM sync word, then read and print forever
-readloop_state_t simple_mfm_reader(readloop_state_t state, uint32_t bits)
-{
-    if (state == TS_RESYNC) {
-        //printf("%x\n", bits);
-        if (bits == SYNC) {
-            start_time = time_us_64();
-            //printf("SYNC\n");
-            inverted = 0;
-            return TS_READ;
-        }
-        if (~bits == SYNC) {
-            start_time = time_us_64();
-            //printf("SYNC INV\n");
-            inverted = 0xffffffff;
-            return TS_READ;
-        }
-    }
-    else if (state == TS_READ) {
-        uint8_t c1, c2;
-        demodulate(bits ^ inverted, &c1, &c2, &mfm_prev_level);
-        putchar(c1);
-        putchar(c2);
-        return TS_READ;
-    }
-    return state;
-}
 
 // ruins raw sector data for testing
 // reed-solomon will recover up to fec_min_distance / 2 byte errors
@@ -140,6 +88,8 @@ int correct_sector_data()
 
     uint16_t crc = calculate_crc(&rx_sector_buf.data[0], payload_data_sz);
 
+    multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE);
+
     std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.file_id[0]), file_id_sz);
     printf("sector %d; file: '%s' crc: actual: %04x expected: %04x %s\n", 
             rx_sector_buf.sector_num,
@@ -148,9 +98,10 @@ int correct_sector_data()
             (crc == rx_sector_buf.crc16) ? "OK" : "CRC ERROR"
             );
 
-    //for (size_t i = 0; i < payload_data_sz; ++i) {
-    //    putchar(rx_sector_buf.data[i]);
-    //}
+
+    for (size_t i = 0; i < payload_data_sz; ++i) {
+        putchar(rx_sector_buf.data[i]);
+    }
 
     rx_prev_sector_num = rx_sector_buf.sector_num;
 
@@ -163,28 +114,28 @@ int correct_sector_data()
 }
 
 // sector reader callback
-readloop_state_t sector_mfm_reader(readloop_state_t state, uint32_t bits)
+readloop_state_t sector_demod_reader(readloop_state_t state, uint32_t bits)
 {
     if (state == TS_RESYNC) {
         if (bits  == SYNC) {
             rx_fec_index = 0;
-            //printf("\nSYNC %08x\n", bits);
+            //printf("\nSYNC %08x\n", bits); // printf is slow, can ruin sync
             inverted = 0x0;
-            mfm_prev_level = 1;
+            prev_level = 1;
             return TS_READ;
         }
         else if (~bits == SYNC) {
             rx_fec_index = 0;
             //printf("\nSYNC INV %08x\n", bits);
             inverted = 0xffffffff;
-            mfm_prev_level = 0;
+            prev_level = 0;
             return TS_READ;
         }
 
     }
     else if (state == TS_READ) {
         uint8_t c1, c2;
-        demodulate(bits ^ inverted, &c1, &c2, &mfm_prev_level);
+        demodulate(bits ^ inverted, &c1, &c2, &prev_level);
         rx_fec_buf[rx_fec_index++] = c1;
         if (rx_fec_index < rx_fec_buf.size()) {
             rx_fec_buf[rx_fec_index++] = c2;
@@ -214,9 +165,9 @@ void core1_entry()
 {
     printf("core1_entry\n");
     rx_prev_sector_num = -1;
-    readloop_delaylocked(sector_mfm_reader);
-    //readloop_simple(sector_mfm_reader);
-    //readloop_naiive(sector_mfm_reader);
+    readloop_delaylocked(sector_demod_reader);
+    //readloop_simple(sector_demod_reader);
+    //readloop_naiive(sector_demod_reader);
 
     multicore_fifo_push_blocking(TS_TERMINATE);
 }
@@ -251,14 +202,67 @@ void insanity_check()
     printf("decoded: %02x %02x\n", c1, c2);
 }
 
-void bitstream_test(int mode)
+Bitstream::Bitstream(int gpio_rdhead, int gpio_wrhead, int gpio_wren)
+    : gpio_rdhead(gpio_rdhead), gpio_wrhead(gpio_wrhead), gpio_wren(gpio_wren),
+    initialized(false)
+{
+}
+
+void Bitstream::init()
+{
+    if (!initialized) {
+        // load pio programs
+        // tx program loads 32-bit words and sends them 1 bit at a time every 8 clock cycles
+        this->offset_tx = pio_add_program(pio, &bitstream_tx_program);
+        printf("Transmit program loaded at %d\n", offset_tx);
+
+        // rx program samples input on every clock cycle and outputs a word
+        this->offset_rx = pio_add_program(pio, &bitstream_rx_program);
+        printf("Receive program loaded at %d\n", offset_rx);
+
+        // calculate clkdiv to match desired MOD_FREQ
+        constexpr float clkdiv = 125e6/(MOD_FREQ * 2 * MOD_HALFPERIOD);
+
+        bitstream_tx_program_init(pio, sm_tx, offset_tx, gpio_wrhead, clkdiv);
+        bitstream_rx_program_init(pio, sm_rx, offset_rx, gpio_rdhead, clkdiv);
+
+        gpio_init(this->gpio_wren);
+        gpio_put(this->gpio_wren, 0); // 0 = read
+        gpio_set_dir(this->gpio_wren, GPIO_OUT);
+
+        initialized = true;
+    }
+}
+
+void Bitstream::deinit()
+{
+    if (initialized) {
+        // shut down PIO
+        pio_sm_set_enabled(pio, sm_tx, false);
+        pio_sm_set_enabled(pio, sm_rx, false);
+        pio_remove_program(pio, &bitstream_tx_program, offset_tx);
+        pio_remove_program(pio, &bitstream_rx_program, offset_rx);
+        pio_clear_instruction_memory(pio);
+
+        initialized = false;
+    }
+}
+
+// switch on write head
+void Bitstream::write_enable(bool enable)
+{
+    printf("write_enable: gpio_wren %d=%d\n", this->gpio_wren, enable ? 1 : 0);
+    gpio_put(this->gpio_wren, enable ? 1 : 0);
+}
+
+void Bitstream::test(int mode)
 {
     sanity_check();
     insanity_check();
 
     readloop_setparams(
             {
-            .bitwidth = mfm_period,
+            .bitwidth = MOD_HALFPERIOD,
             .Kp = 0.0333,
             .Ki = 0.000001,
             .alpha = 0.1,
@@ -268,25 +272,10 @@ void bitstream_test(int mode)
     // sectors
     SectorWrite sectors;
 
-    // load pio programs
-    // tx program loads 32-bit words and sends them 1 bit at a time every 8 clock cycles
-    uint offset_tx = pio_add_program(pio, &bitstream_tx_program);
-    printf("Transmit program loaded at %d\n", offset_tx);
-
-    // rx program samples input on every clock cycle and outputs a word
-    uint offset_rx = pio_add_program(pio, &bitstream_rx_program);
-    printf("Receive program loaded at %d\n", offset_rx);
-
-    // Configure state machines, push bits out at 8000 bps (max freq 4000hz)
-    constexpr float clkdiv = 125e6/(MFM_FREQ * 2 * mfm_period);
-
-    bitstream_tx_program_init(pio, sm_tx, offset_tx, GPIO_WRHEAD, clkdiv);
-    bitstream_rx_program_init(pio, sm_rx, offset_rx, GPIO_RDHEAD, clkdiv);
+    init(); // hardware up
 
     if (mode & BS_TX) pio_sm_set_enabled(pio, sm_tx, true);
     if (mode & BS_RX) pio_sm_set_enabled(pio, sm_rx, true);
-
-    uint8_t mfm_cur_level = 0, mfm_prev_bit = 0;
 
     // load plaintext data
     size_t psz = get_plaintext_size();
@@ -315,6 +304,7 @@ void bitstream_test(int mode)
     start_time = time_us_64();
 
     if (mode & BS_TX) {
+        write_enable(true);
         // encode the blocks and send them out
         for (size_t input_ofs = 0, sector_num = 0; input_ofs < psz; input_ofs += payload_data_sz) {
             int data_sz = std::min(psz - input_ofs, payload_data_sz);
@@ -330,7 +320,7 @@ void bitstream_test(int mode)
 
             // add a looong leader before the first block
             if (sector_num == 0) {
-                for (int i = 0; i < 128; ++i) {
+                for (int i = 0; i < 256; ++i) {
                     pio_sm_put_blocking(pio, sm_tx, LEADER);
                     pio_sm_put_blocking(pio, sm_tx, LEADER);
                     pio_sm_put_blocking(pio, sm_tx, LEADER);
@@ -345,14 +335,8 @@ void bitstream_test(int mode)
             }
             // mfm sync word
             pio_sm_put_blocking(pio, sm_tx, SYNC);
-            mfm_cur_level = 1;    // adjust line levels after sync word
-            mfm_prev_bit = 1;
+            uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
 
-            //for (size_t i = 0; i < tx_fec_buf.size(); i += 2) {
-            //    uint32_t mfm_encoded = modulate(tx_fec_buf[i], 
-            //            tx_fec_buf[i + 1], &mfm_cur_level, &mfm_prev_bit);
-            //    pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
-            //}
             for (size_t i = 0; i < sectors.size(); i += 2) {
                 uint32_t mfm_encoded = modulate(sectors[i], 
                         sectors[i + 1], &mfm_cur_level, &mfm_prev_bit);
@@ -376,6 +360,8 @@ void bitstream_test(int mode)
 #endif
         }
     }
+
+    write_enable(false);
 
     int c;
     if (mode & BS_RX) {
@@ -416,14 +402,114 @@ void bitstream_test(int mode)
     }
 #endif
 
-    // shut down PIO
-    pio_sm_set_enabled(pio, sm_tx, false);
-    pio_sm_set_enabled(pio, sm_rx, false);
-    pio_remove_program(pio, &bitstream_tx_program, offset_tx);
-    pio_remove_program(pio, &bitstream_rx_program, offset_rx);
-    pio_clear_instruction_memory(pio);
-
     if (mode & BS_RX) {
         correct_reed_solomon_destroy(rs_rx);
     }
+}
+
+void
+Bitstream::test_sector_rewrite()
+{
+    init();
+    write_enable(true);
+    sleep_ms(1000);
+    write_enable(false);
+    return;
+
+    sanity_check();
+    insanity_check();
+
+    constexpr int edit_sector_num = 5;
+
+    printf("will attempt to rewrite sector %d, tape should be rewound and moving\n",
+            edit_sector_num);
+    sleep_ms(100);
+
+    readloop_setparams(
+            {
+            .bitwidth = MOD_HALFPERIOD,
+            .Kp = 0.0333,
+            .Ki = 0.000001,
+            .alpha = 0.1,
+            .sampler = bitsampler_pio
+            });
+
+    // sectors
+    SectorWrite sectors;
+    init();
+
+    pio_sm_set_enabled(pio, sm_tx, true);
+    pio_sm_set_enabled(pio, sm_rx, true);
+
+    printf("Will edit/rewrite sector 5\n");
+
+    // load updated data (1 sector)
+    size_t edittext_sz = get_edittext_size();
+    const unsigned char * edittext = get_edittext();
+
+    rs_rx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
+            1, 1, fec_min_distance);
+
+    pio_sm_clear_fifos(pio, sm_rx);
+    pio_sm_clear_fifos(pio, sm_tx);
+
+    multicore_launch_core1(core1_entry);
+    sleep_ms(10);
+
+    // prepare write data
+    sectors.set_file_id("alicetxt");
+    printf("edittext (%d):\n%s\n", edittext_sz, edittext);
+    sleep_ms(100);
+    sectors.prepare(edittext, 210, edit_sector_num);
+
+    printf("entering seek loop\n");
+
+    uint32_t out;
+    for(;;) {
+        out = 0;
+        multicore_fifo_pop_timeout_us(100000, &out); 
+        if (out == TS_TERMINATE) {
+            printf("reader requested termination\n");
+            break;
+        }
+        if (out == MSG_SECTOR_READ_DONE) {
+            printf("SECTOR_READ_DONE %d\n", rx_sector_buf.sector_num);
+            if (rx_sector_buf.sector_num == edit_sector_num - 1) {
+                bitsampler_or = 0x80000000;
+                printf("found sector %d, will replace the next one\n", rx_sector_buf.sector_num);
+                break;
+            }
+        }
+        int c = getchar_timeout_us(0); 
+        if (c != PICO_ERROR_TIMEOUT) {
+            printf("abort\n");
+            return;
+        }
+    }
+
+    // no time to lose, switch like fuck into write-mode
+    write_enable(true);
+
+    // pre-block leader for tuning up the DLL, it also creates a time gap
+    // needed by the receiver to decode the block
+    for (int i = 0; i < 16; ++i) {
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+    }
+    // mfm sync word
+    pio_sm_put_blocking(pio, sm_tx, SYNC);
+    uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
+
+    for (size_t i = 0; i < sectors.size(); i += 2) {
+        uint32_t mfm_encoded = modulate(sectors[i], 
+                sectors[i + 1], &mfm_cur_level, &mfm_prev_bit);
+        pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
+    }
+
+    while (!pio_sm_is_tx_fifo_empty(pio, sm_tx)) putchar('.');
+    sleep_ms(4);
+
+    write_enable(false);
+
+    printf("Replaced sector %f\n", edit_sector_num);
+    
 }

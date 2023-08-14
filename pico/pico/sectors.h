@@ -24,6 +24,14 @@ struct sector_layout_t {
     uint16_t  crc16;
 } __attribute__((packed));
 
+union full_sector_data_t {
+    struct _layout {
+        sector_layout_t sector_data;
+        std::array<uint8_t, fec_min_distance + 1> parity;
+    } layout;
+    std::array<uint8_t, fec_block_length + 1> rawbuf;
+} __attribute__((packed));
+
 uint16_t calculate_crc(uint8_t * data, size_t len);
 
 // singletonize or make it a proper class

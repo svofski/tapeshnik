@@ -10,6 +10,8 @@ enum readloop_state_t
     TS_TERMINATE,
 };
 
+const int MSG_SECTOR_READ_DONE = 0x100;
+
 
 // reader callback: receives tracking state and 32 sampled bits, returns new state
 // its job is to decode the bits (fm, mfm, whatever) store and decode
