@@ -139,4 +139,38 @@ Or maybe should the sector marks be written once, leaving some small gaps for th
   * long gap to fit the entire block of data, including the leader and its own sync sequence
   * next..
 
+I've had some success in writing and reading data to tape, which is partly documented in the videos. Shortly after implementing soft head switching circuit using cd4052, I managed to cook my main work Pi Pico board. I don't know what exactly happened, probably a ground disconnect or something like that sent wrong voltage up GPIO pins. Curiously, the controller still works, but several GPIO pins don't function and it's abnormally warm to touch. While the board and new parts are in the post, it's time for a new hardware revision. I decided to take a break from tinkering and design a proper PCB. The design seems to be functional and I hope having a solid board with fewer dangling wires would make it easier to develop further. 
 
+## Hardware revision 1
+
+### Dealing with various voltages
+
+Pi Pico is 3.3V, not 5V tolerant and we're dealing with 12V motor and solenoid plus 5V opamp circuits.
+
+#### 12V
+
+I redesigned +12V control circuits with a bit of a paranoid streak:
+
+![paranoid12v](12v-paranoid.jpg)
+
+The expectation is that if 12V would somehow leak back up GPIO side, the beefier BAT54S would withstand a larger current, and the current would be limited by R3 and R2.
+
+Initially I used a lab supply to power the motor and solenoid, and USB bus power for everything else. This is ok for some tests, but it has become a bit too clunky. Also a catastrophic disconnect of a single wire could lead to my Pico getting cooked. So I decided to generate all voltages on board. 
+
+To generate 12V, I want to use this DC-DC converter based on SX1308. 
+
+![sx1308.jpg](sx1308.jpg)
+
+The Chinese description says SX1308 DC-DC可调升压板2A, but it's unclear which part of it is taking 2A. It seems that it should be able to handle 12V/50mA needed by the motor. I'm a bit worried by solenoid, even though it's only used momentarily.
+
+I only measured 4.5V on my USB bus power. This is not great for the analog section, so I decided to derive 5V with an LDO from the on-board generated 12V.
+
+![dcdc-ldo.jpg](dcdc-ldo.jpg)
+
+Digital and analog grounds are separated. On PCB they join together at one point near the LDO.
+
+There's a tap after the second stage of amplification that should in theory allow analog sampling of the signal. I'm really unsure about characteristics of the signal at this point, so there's an N/C resistor separating that part from ADC input pin. This part is not really in the current goals, but I wanted to leave something open for further experimentation here. Unfortunately I forgot to add clamp diodes on these pins too. Something to keep in mind.
+
+![pcb layout](pcb-layout1.jpg)
+
+Waiting time...
