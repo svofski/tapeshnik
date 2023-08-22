@@ -26,3 +26,9 @@ These days I think it's more practiccal to use BLDC motors. They are well resear
 
 ![MY-2813C](docs/futuristic/pro1-1-text.jpg)
 
+### Sensor
+
+List of "known good" mouse sensors from the point of view of gamers. 
+https://thegamingsetup.com/gaming-mouse/buying-guides/flawless-mouse-sensor-list
+
+A quick test shows that my random mouse at least sees the tape moving in the cassette. Worth investigating.
