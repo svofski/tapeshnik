@@ -26,9 +26,11 @@ It's not 100% clear which kinds of motors are used in D/CAS, but at least some e
 
 These days I think it's more practiccal to use BLDC motors. They are well researched and existing solutions for various kinds of BLDC control are available. Apparently we're looking for low-KV gimbal type motor, which should also be slotless to minimise cogging. An example of such a motor is JDPOWER MY-2813C, 75 yuan @ taobao. It seems to be slotless, although not with 100% certainty.
 
-![MY-2813C](docs/futuristic/JDPOWER MY-2813C.png)
+![MY-2813C](futuristic/JDPOWER%20MY-2813C.png)
 
-Motor controller board is going to use SimpleFOC.
+It is also worth checking out if DVD motors can be used as well. They are not designed with small speed in mind, but they have ring magnets so they may cog less.
+
+Motor controller board is going to use [SimpleFOC](https://simplefoc.com/).
 
 Motor drivers: [STSPIN233](futuristic/stspin233-1.pdf)
 
