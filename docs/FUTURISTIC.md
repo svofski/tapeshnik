@@ -42,3 +42,12 @@ https://thegamingsetup.com/gaming-mouse/buying-guides/flawless-mouse-sensor-list
 A quick test shows that my random mouse at least sees the tape moving in the cassette. Worth investigating.
 
 The sensor to be tested is [PMW3389DM-T3QU](futuristic/pixart_pmw3389dm-t3qu_-_productbrief_1374785_20.pdf)
+
+
+### Standards
+
+[STANDARD ECMA-34](futuristic/ECMA-34_3rd_edition_september_1976.pdf) has good technical drawings of D/CAS cassette. With the exception of the asymmetrical dent and lack of pressure pad, it's identical to Compact Cassette. I used this drawing as my reference:
+
+![otherworldly beauty](futuristic/ecma-34-cassette-dimensions.jpg)
+
+
