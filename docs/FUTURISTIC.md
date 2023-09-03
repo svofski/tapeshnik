@@ -1,6 +1,6 @@
 # Tapeshnik Futuristic Notes
 
-![mecha](docs/futuristic/mecha1.gif)
+![mecha](futuristic/mecha1.gif)
 
 While the current mechanism works, its limitations are obvious and its reliability is questionnable. Shall something break, it will be getting harder to get a replacement.
 
@@ -30,7 +30,7 @@ These days I think it's more practiccal to use BLDC motors. They are well resear
 
 Motor controller board is going to use SimpleFOC.
 
-Motor drivers: [STSPIN233](docs/futuristic/stspin233-1.pdf)
+Motor drivers: [STSPIN233](futuristic/stspin233-1.pdf)
 
 ### Sensor
 
@@ -39,4 +39,4 @@ https://thegamingsetup.com/gaming-mouse/buying-guides/flawless-mouse-sensor-list
 
 A quick test shows that my random mouse at least sees the tape moving in the cassette. Worth investigating.
 
-The sensor to be tested is [PMW3389DM-T3QU](docs/futuristic/pixart_pmw3389dm-t3qu_-_productbrief_1374785_20.pdf)
+The sensor to be tested is [PMW3389DM-T3QU](futuristic/pixart_pmw3389dm-t3qu_-_productbrief_1374785_20.pdf)
