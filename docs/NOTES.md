@@ -174,3 +174,5 @@ There's a tap after the second stage of amplification that should in theory allo
 ![pcb layout](pcb-layout1.jpg)
 
 Waiting time...
+
+And while we're waiting, it's time for the [FUTURISTIC](FUTURISTIC.md) TAPESHNIK-MECHA !
