@@ -1,8 +1,10 @@
 # Tapeshnik Futuristic Notes
 
+![mecha](docs/futuristic/mecha1.gif)
+
 While the current mechanism works, its limitations are obvious and its reliability is questionnable. Shall something break, it will be getting harder to get a replacement.
 
-As a tangent project, I have an idea to designn a simple, relatively repeatable tape mechanism that could be built from scratch using available parts. Obviously the heads will still have to be sourced, but cassette heads are relatively abundant.
+As a tangent project, I have an idea to design a simple, relatively easy to repeat tape mechanism that could be built from scratch using available parts. Obviously the heads will still have to be sourced, but cassette heads are relatively abundant.
 
 As an inspiration I have TEAC D/CAS system. It uses tapes that look almost identical to Compact Cassettes. It's a two-motor direct drive system without a capstan. 
 
@@ -16,7 +18,7 @@ The main frame of the mechanism can be built from several layers of PCB material
 
 ### RW heads
 
-Ideally a 4-track head is needed. Erase head is not strictly necessary and a regular fixed autoreverse head would work. With movable spindles
+Ideally a 4-track head is needed. Erase head is not strictly necessary and a regular fixed autoreverse head would work.
 
 ### Motors
 
@@ -24,7 +26,11 @@ It's not 100% clear which kinds of motors are used in D/CAS, but at least some e
 
 These days I think it's more practiccal to use BLDC motors. They are well researched and existing solutions for various kinds of BLDC control are available. Apparently we're looking for low-KV gimbal type motor, which should also be slotless to minimise cogging. An example of such a motor is JDPOWER MY-2813C, 75 yuan @ taobao. It seems to be slotless, although not with 100% certainty.
 
-![MY-2813C](docs/futuristic/pro1-1-text.jpg)
+![MY-2813C](docs/futuristic/JDPOWER MY-2813C.png)
+
+Motor controller board is going to use SimpleFOC.
+
+Motor drivers: [STSPIN233](docs/futuristic/stspin233-1.pdf)
 
 ### Sensor
 
@@ -32,3 +38,5 @@ List of "known good" mouse sensors from the point of view of gamers.
 https://thegamingsetup.com/gaming-mouse/buying-guides/flawless-mouse-sensor-list
 
 A quick test shows that my random mouse at least sees the tape moving in the cassette. Worth investigating.
+
+The sensor to be tested is [PMW3389DM-T3QU](docs/futuristic/pixart_pmw3389dm-t3qu_-_productbrief_1374785_20.pdf)
