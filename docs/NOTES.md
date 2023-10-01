@@ -197,7 +197,11 @@ The additional benefit is that I can completely shut down the boost converter an
 SX1308 modules are described as "2A", but the reality is that they're not very efficient when boosting up to 12V. Here's a link to [Matt's Electronics](https://www.matts-electronics.com/wp-content/uploads/2018/06/SX1308.pdf) with a characterization of these modules and we can see that their efficiency takes a sharp nosedive at around 9-10V output when boosting up from 4.5-5V like I have here. This results in solenoid being very weak, I almost had to give it a helping hand sometimes. Luckily, both the motor and the solenoid work really well at 9.5V and at this voltage SX1308 is happy to push enough amperes. So my +12V is now +9.5V.
 
 #### Continuing from where I left
-There were some other mishaps not worthy of mention, mostly caused by my poor soldering and parts mishandling. After everything was sorted out, I managed to read the data from my cassette. 
+There were some other mishaps not worthy of mention, mostly caused by my poor soldering and parts mishandling. 
+
+![bodgesome board](bodgesome-proto2.jpg)
+
+After everything was sorted out, I managed to read the data from my cassette. 
 
 [Tapeshnik is alive again (youtube short)](https://youtube.com/shorts/GOCvX2H30LI)
 
