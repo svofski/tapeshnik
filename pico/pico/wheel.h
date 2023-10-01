@@ -8,13 +8,25 @@ typedef enum wheel_position_e {
     WP_REW = 3,
 } wheel_position_t;
 
+struct Boost
+{
+    int gpio;
+
+    Boost(int pin) : gpio(pin) {}
+    void init();
+    void power_on();
+    void power_off();
+    bool state() const;
+};
+
 struct Motor
 {
+    Boost& boost;
     int status;
     int gpio;
     int motor_off_alarm_id;
 
-    Motor(int pin) : gpio(pin) {}
+    Motor(Boost& _boost, int pin) : boost(_boost), gpio(pin) {}
     void init();
     void enable(bool ena);
     void motor_on();

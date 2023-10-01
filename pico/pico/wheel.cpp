@@ -17,14 +17,23 @@ void Motor::init()
     gpio_set_dir(this->gpio, GPIO_OUT);
     this->status = 0;
     this->motor_off_alarm_id = -1;
+
+    boost.init();
 }
 
 void Motor::enable(bool ena)
 {
+    if (ena && !boost.state()) {
+        boost.power_on();
+        sleep_ms(100);
+    }
     cancel_alarm(motor_off_alarm_id);
     motor_off_alarm_id = -1;
     this->status = ena ? 1 : 0;
     gpio_put(this->gpio, this->status);
+    if (!ena) {
+        boost.power_off();
+    }
 }
 
 void Motor::motor_on()
@@ -93,9 +102,9 @@ int Wheel::stop()
 
     // faster step out from PLAY position
     if (this->wheel_position == WP_PLAY) {
-        this->solenoid.pulse_ms(10);
+        this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
         ::sleep_ms(200);
-        this->solenoid.pulse_ms(10);
+        this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
         ::sleep_ms(200);
     }
 
@@ -106,7 +115,7 @@ int Wheel::stop()
     //
 
     for (int retry = 0; (retry < 3) && (debounce_get(this->i_mode_entry) == 0); ++retry) {
-        solenoid.pulse_ms(10);
+        solenoid.pulse_ms(SOLENOID_PULSE_MS);
         for (int i = 0; i < 10; ++i) {
             sleep_ms(50);
             if (debounce_get(this->i_mode_entry)) {
@@ -147,7 +156,7 @@ int Wheel::play()
     if (this->tape_error != ERR_OK) 
         return tape_error;
 
-    this->solenoid.pulse_ms(10);
+    this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
     sleep_ms(425);  // half-turn +
     this->wheel_position = WP_PLAY;
 
@@ -168,7 +177,7 @@ int Wheel::ff()
     if (this->tape_error != ERR_OK)
         return this->tape_error;
 
-    this->solenoid.pulse_ms(10);
+    this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
     sleep_ms(325);
     this->wheel_position = WP_FF;
 
@@ -189,9 +198,9 @@ int Wheel::rew()
     if (this->tape_error != ERR_OK)
         return this->tape_error;
 
-    this->solenoid.pulse_ms(10);
+    this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
     sleep_ms(50);
-    this->solenoid.pulse_ms(10);
+    this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
     sleep_ms(100);
     tacho_set_dir(-1);
     sleep_ms(200);
@@ -210,4 +219,27 @@ void Wheel::init()
     gpio_pull_up(this->i_mode_entry);
     debounce_add_gpio(this->i_mode_entry);
     this->wheel_position = WP_UNKNOWN;
+}
+
+void Boost::init()
+{
+    gpio_init(this->gpio);
+    gpio_pull_down(this->gpio);
+    gpio_put(this->gpio, 0);
+    gpio_set_dir(this->gpio, GPIO_OUT);
+}
+
+void Boost::power_on()
+{
+    gpio_put(this->gpio, 1);
+}
+
+void Boost::power_off()
+{
+    gpio_put(this->gpio, 0);
+}
+
+bool Boost::state() const
+{
+    return gpio_get(this->gpio);
 }

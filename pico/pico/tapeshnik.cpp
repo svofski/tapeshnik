@@ -19,8 +19,8 @@
 #define ML_STOP_REQUEST ' '
 int mainloop_request = ML_NO_REQUEST;
 
-
-Motor motor(GPIO_MOTOR_CONTROL);
+Boost boost(GPIO_EBOOST);
+Motor motor(boost, GPIO_MOTOR_CONTROL);
 Solenoid solenoid(GPIO_SOLENOID_CONTROL);
 Wheel wheel(motor, solenoid, GPIO_MODE_ENTRY);
 Bitstream bstream(GPIO_RDHEAD, GPIO_WRHEAD, GPIO_WREN);
@@ -108,6 +108,11 @@ int main() {
 
     wheel.init();
 
+    //gpio_disable_pulls(GPIO_RDHEAD);
+    //gpio_pull_up(GPIO_RDHEAD);
+    //gpio_set_dir(GPIO_RDHEAD, /* out */ true);
+    //gpio_put(GPIO_RDHEAD, 1);
+
     // Wait forever
     while (1) {
         int c = mainloop_request;
@@ -119,6 +124,8 @@ int main() {
             }
         }
         switch (c) {
+            case 'z': solenoid.pulse_ms(50);
+                      break;
             case 'm': motor.enable(!motor.get_status());
                       printf("motor=%d\n", motor.get_status());
                       break;

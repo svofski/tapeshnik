@@ -3,6 +3,9 @@
 /* time in milliseconds before motor turns off after STOP */
 #define MOTOR_OFF_DELAY 1500
 
+
+#define GPIO_EBOOST 6 // 1 = enable 12V boost converter
+
 //     ___ 
 // ___/ 0 \_____
 #define GPIO_MODE_ENTRY 22
@@ -17,3 +20,5 @@
 
 #define MOD_HALFPERIOD  8     // number of clocks per half-period in modulation
 #define MOD_FREQ        3300  // max bit flipping frequency
+                              //
+#define SOLENOID_PULSE_MS 25
