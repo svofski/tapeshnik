@@ -1,4 +1,4 @@
-![image](https://github.com/svofski/tapeshnik/assets/6445874/deb9cae5-4228-4ca0-b0e1-760dea10f6fc)# Tapeshnik
+# Tapeshnik
 
 ## ME-136 KS211M
 
