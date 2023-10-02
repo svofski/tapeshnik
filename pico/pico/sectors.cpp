@@ -16,7 +16,7 @@ static sector_layout_t tx_sector_buf;
 // todo: join with the buffer above, encode can work with that
 
 // tx buffer for feck (+1 pad to 256 for easier encoding)
-static std::array<uint8_t, 2*fec_block_length + 1> tx_fec_buf;
+static std::array<uint8_t, fec_block_length + 1> tx_fec_buf;
 
 // prepare sector for writing
 // returns number of bytes taken from data
@@ -38,6 +38,12 @@ SectorWrite::prepare(const uint8_t * data, size_t data_sz, uint16_t sector_num)
     // add parity and return
     const uint8_t * as_bytes = reinterpret_cast<const uint8_t *>(&tx_sector_buf);
     correct_reed_solomon_encode(rs_tx, as_bytes, fec_message_sz, tx_fec_buf.begin());
+
+    //printf("feck: fec_message_sz=%d fec_buf_sz=%d\n", fec_message_sz, tx_fec_buf.size());
+    //for (auto i = 0; i < tx_fec_buf.size(); ++i) {
+    //    printf("%02x ", tx_fec_buf[i]);
+    //}
+    //printf("\n");
 
     return use_bytes;
 }

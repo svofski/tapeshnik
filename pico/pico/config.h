@@ -28,5 +28,5 @@
 #define GPIO_ACT_LED    9
 
 #define BOT_LEADER_LEN      256
-#define SECTOR_LEADER_LEN   16
-#define SECTOR_TRAILER_LEN  8
+#define SECTOR_LEADER_LEN   8
+#define SECTOR_TRAILER_LEN  4

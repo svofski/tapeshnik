@@ -351,7 +351,6 @@ void Bitstream::test(int mode)
             }
 
             // this takes a moment: prepare all data before writing
-            // in writing phase is important so there must be no fifo underruns
             //encode_block(rs_tx, plaintext + input_ofs, data_sz, &tx_sector_buf, tx_fec_buf.begin());
             sectors.prepare(plaintext + input_ofs, data_sz, sector_num);
 
@@ -370,7 +369,7 @@ void Bitstream::test(int mode)
             for (int i = 0; i < SECTOR_LEADER_LEN; ++i) {
                 pio_sm_put_blocking(pio, sm_tx, LEADER);
             }
-            // mfm sync word
+            // sync word
             pio_sm_put_blocking(pio, sm_tx, SYNC);
             uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
 
@@ -378,6 +377,7 @@ void Bitstream::test(int mode)
                 uint32_t mfm_encoded = modulate(sectors[i], 
                         sectors[i + 1], &mfm_cur_level, &mfm_prev_bit);
                 pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
+                //printf("%02x %02x ", sectors[i], sectors[i + 1]);
             }
 
             // post-sector gap
@@ -454,7 +454,7 @@ Bitstream::test_sector_rewrite()
     sanity_check();
     insanity_check();
 
-    constexpr int edit_sector_num = 5;
+    constexpr int edit_sector_num = 3;
 
     printf("will attempt to rewrite sector %d, tape should be rewound and moving\n",
             edit_sector_num);
@@ -498,9 +498,9 @@ Bitstream::test_sector_rewrite()
     sectors.set_file_id("alicetxt");
     printf("edittext (%d):\n%s\n", edittext_sz, edittext);
     sleep_ms(100);
-    sectors.prepare(edittext, 210, edit_sector_num);
+    //sectors.prepare(edittext, 210, edit_sector_num);
 
-    printf("seek sector %d\n", edit_sector_num);
+    printf("seek to sector %d\n", edit_sector_num);
 
     uint32_t out;
     for(;;) {
@@ -512,8 +512,8 @@ Bitstream::test_sector_rewrite()
         }
         if (out == MSG_SECTOR_READ_DONE) {
             if (rx_sector_buf.sector_num == edit_sector_num - 1) {
-                bitsampler_or = RL_BREAK;
-                multicore_reset_core1(); // easy way to stop it?
+                bitsampler_or = RL_BREAK; // tell the read loop to break
+                multicore_reset_core1();  // kill the core
                 //printf("found sector %d, will replace the next one\n", rx_sector_buf.sector_num);
                 break;
             }
@@ -533,15 +533,24 @@ Bitstream::test_sector_rewrite()
         }
     }
 
+    // pace out the previous sector trailer
+    for (int i = 0; i < SECTOR_TRAILER_LEN; ++i) {
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+    }
+    while (!pio_sm_is_tx_fifo_empty(pio, sm_tx));// putchar('.');
+
+    // encode on the fly like normal write
+    sectors.prepare(edittext, edittext_sz - 1, edit_sector_num);
+
     // no time to lose, switch like fuck into write-mode
     write_enable(true);
 
     // pre-block leader for tuning up the DLL, it also creates a time gap
     // needed by the receiver to decode the block
-    for (int i = 0; i < SECTOR_LEADER_LEN + SECTOR_TRAILER_LEN; ++i) {
+    for (int i = 0; i < SECTOR_LEADER_LEN; ++i) {
         pio_sm_put_blocking(pio, sm_tx, LEADER);
     }
-    // mfm sync word
+    // sync word
     pio_sm_put_blocking(pio, sm_tx, SYNC);
     uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
 
