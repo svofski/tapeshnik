@@ -14,6 +14,7 @@
 #include "mainloop.h"
 #include "tacho.h"
 #include "bitstream.h"
+#include "util.h"
 
 #define ML_NO_REQUEST   0
 #define ML_STOP_REQUEST ' '
@@ -28,21 +29,6 @@ Bitstream bstream(GPIO_RDHEAD, GPIO_WRHEAD, GPIO_WREN);
 void request_wheel_stop()
 {
     mainloop_request = ML_STOP_REQUEST;
-}
-
-void blink_on()
-{
-    printf("\033[5m");
-}
-
-void blink_off()
-{
-    printf("\033[25m");
-}
-
-void print_color(int c1, int c2, const char * msg, const char * endl)
-{
-    printf("\033[%d;%dm%s\033[0m%s", c1, c2, msg, endl);
 }
 
 char tacho_counter_str[16];
@@ -163,6 +149,10 @@ int main() {
             case 10:
             case 13:
                       printf("\nHelp: m=motor, p=play, f=ff, r=rew, space=stop, 0=zero counter\n");
+                      set_color(41, 37);
+                      printf("ERROR TEST");
+                      reset_color();
+                      putchar('\n');
                       break;
         }
 

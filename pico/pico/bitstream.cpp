@@ -19,6 +19,7 @@
 #include "correct.h"
 #include "crc.h"
 #include "mfm.h"
+#include "util.h"
 
 // current working version is FM
 #define modulate    fm_encode_twobyte
@@ -91,13 +92,20 @@ int correct_sector_data()
     multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE);
 
     std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.file_id[0]), file_id_sz);
-    printf("sector %d; file: '%s' crc: actual: %04x expected: %04x %s\n", 
+    set_color(40, 33); // 40 = black bg, 33 = brown fg
+    printf("\nsector %d; file: '%s' crc actual: %04x expected: %04x ", 
             rx_sector_buf.sector_num,
             filename.c_str(),
-            crc, rx_sector_buf.crc16,
-            (crc == rx_sector_buf.crc16) ? "OK" : "CRC ERROR"
-            );
-
+            crc, rx_sector_buf.crc16);
+    if (crc == rx_sector_buf.crc16) {
+        printf("OK");
+    }
+    else {
+        set_color(41, 37);
+        printf("ERROR");
+    }
+    reset_color();
+    putchar('\n');
 
     for (size_t i = 0; i < payload_data_sz; ++i) {
         putchar(rx_sector_buf.data[i]);
@@ -106,7 +114,7 @@ int correct_sector_data()
     rx_prev_sector_num = rx_sector_buf.sector_num;
 
     if (rx_sector_buf.reserved0 & SECTOR_FLAG_EOF) {
-        printf("\nEOF\n");
+        print_color(45, 33, "EOF", "\n");
         return -1;
     }
 

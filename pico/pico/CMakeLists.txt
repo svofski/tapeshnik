@@ -9,6 +9,7 @@ add_executable(tapeshnik
         plaintext.cpp
         crc.c
         mfm.cpp
+        util.cpp
         )
 
 pico_generate_pio_header(tapeshnik ${CMAKE_CURRENT_LIST_DIR}/bitstream.pio)
