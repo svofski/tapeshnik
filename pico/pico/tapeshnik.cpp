@@ -24,7 +24,8 @@ Boost boost(GPIO_EBOOST);
 Motor motor(boost, GPIO_MOTOR_CONTROL);
 Solenoid solenoid(GPIO_SOLENOID_CONTROL);
 Wheel wheel(motor, solenoid, GPIO_MODE_ENTRY);
-Bitstream bstream(GPIO_RDHEAD, GPIO_WRHEAD, GPIO_WREN);
+Bitstream bstream(GPIO_RDHEAD, GPIO_WRHEAD, GPIO_WREN, GPIO_READ_LED,
+        GPIO_WRITE_LED);
 
 void request_wheel_stop()
 {

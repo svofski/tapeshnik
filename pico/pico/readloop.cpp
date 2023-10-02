@@ -118,7 +118,7 @@ uint32_t readloop_naiive(readloop_callback_t cb)
     const int shortpulse = bitwidth;
     for (; state != TS_TERMINATE;) {
         uint32_t cur = sample_one_bit();
-        if (cur & 0x80000000) {
+        if (cur & RL_BREAK) {
             break;
         }
 
@@ -201,6 +201,9 @@ uint32_t readloop_delaylocked(readloop_callback_t cb)
 
     for (; state != TS_TERMINATE;) {
         uint32_t bit = sample_one_bit();
+        if (bit & RL_BREAK) {
+            break;
+        }
 
         if (debugbuf_index < debugbuf.size()) {
             rawsample = (rawsample << 1) | bit;

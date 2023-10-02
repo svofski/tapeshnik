@@ -15,13 +15,19 @@ private:
     int gpio_rdhead;
     int gpio_wrhead;
     int gpio_wren;
+    int gpio_read_led;
+    int gpio_write_led;
     bool initialized;
     uint offset_tx, offset_rx;
 
     // switch to write mode
     void write_enable(bool enable);
 public:
-    Bitstream(int gpio_rdhead, int gpio_wrhead, int gpio_wren);
+    Bitstream(int gpio_rdhead, int gpio_wrhead, int gpio_wren, int gpio_read_led,
+            int gpio_write_led)
+      : gpio_rdhead(gpio_rdhead), gpio_wrhead(gpio_wrhead), gpio_wren(gpio_wren), 
+        gpio_read_led(gpio_read_led), gpio_write_led(gpio_write_led),
+        initialized(false) {}
     ~Bitstream();
 
     void init();   // prepare hardware and algorithms

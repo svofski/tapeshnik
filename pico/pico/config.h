@@ -19,6 +19,14 @@
 #define GPIO_TACHO 19
 
 #define MOD_HALFPERIOD  8     // number of clocks per half-period in modulation
-#define MOD_FREQ        3300  // max bit flipping frequency
+#define MOD_FREQ        6600  // max bit flipping frequency
                               //
 #define SOLENOID_PULSE_MS 25
+
+#define GPIO_READ_LED   8
+#define GPIO_WRITE_LED  7
+#define GPIO_ACT_LED    9
+
+#define BOT_LEADER_LEN      256
+#define SECTOR_LEADER_LEN   16
+#define SECTOR_TRAILER_LEN  8

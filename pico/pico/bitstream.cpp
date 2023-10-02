@@ -36,6 +36,10 @@ size_t get_edittext_size();
 
 correct_reed_solomon * rs_rx = 0;
 
+// print sector payload as plain text in correct_sector_data()
+volatile bool enable_print_sector_text = false;
+volatile bool enable_print_sector_info = false;
+
 PIO pio = pio0;
 uint sm_tx = 0, sm_rx = 1;
 
@@ -79,36 +83,44 @@ int correct_sector_data()
     ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, rx_fec_buf.begin(),
             rx_fec_buf.size(), rx_ptr);
     if (decoded_sz <= 0) {
-        std::copy_n(rx_fec_buf.begin(), sizeof(rx_sector_buf), rx_ptr);
-        printf("\n\n--- unrecoverable error in sector %d  ---\n", rx_sector_buf.sector_num);
+        if (enable_print_sector_info) {
+            std::copy_n(rx_fec_buf.begin(), sizeof(rx_sector_buf), rx_ptr);
+            printf("\n\n--- unrecoverable error in sector %d  ---\n", rx_sector_buf.sector_num);
+        }
     }
     if (rx_sector_buf.sector_num != rx_prev_sector_num + 1) {
-        printf("\n\n--- sector out of sequence; previous: %d current: %d\n\n", 
-                rx_prev_sector_num, rx_sector_buf.sector_num);
+        if (enable_print_sector_info) {
+            printf("\n\n--- sector out of sequence; previous: %d current: %d\n\n", 
+                    rx_prev_sector_num, rx_sector_buf.sector_num);
+        }
     }
 
     uint16_t crc = calculate_crc(&rx_sector_buf.data[0], payload_data_sz);
 
     multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE);
 
-    std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.file_id[0]), file_id_sz);
-    set_color(40, 33); // 40 = black bg, 33 = brown fg
-    printf("\nsector %d; file: '%s' crc actual: %04x expected: %04x ", 
-            rx_sector_buf.sector_num,
-            filename.c_str(),
-            crc, rx_sector_buf.crc16);
-    if (crc == rx_sector_buf.crc16) {
-        printf("OK");
+    if (enable_print_sector_info) {
+        std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.file_id[0]), file_id_sz);
+        set_color(40, 33); // 40 = black bg, 33 = brown fg
+        printf("\nsector %d; file: '%s' crc actual: %04x expected: %04x ", 
+                rx_sector_buf.sector_num,
+                filename.c_str(),
+                crc, rx_sector_buf.crc16);
+        if (crc == rx_sector_buf.crc16) {
+            printf("OK");
+        }
+        else {
+            set_color(41, 37);
+            printf("ERROR");
+        }
+        reset_color();
+        putchar('\n');
     }
-    else {
-        set_color(41, 37);
-        printf("ERROR");
-    }
-    reset_color();
-    putchar('\n');
 
-    for (size_t i = 0; i < payload_data_sz; ++i) {
-        putchar(rx_sector_buf.data[i]);
+    if (enable_print_sector_text) {
+        for (size_t i = 0; i < payload_data_sz; ++i) {
+            putchar(rx_sector_buf.data[i]);
+        }
     }
 
     rx_prev_sector_num = rx_sector_buf.sector_num;
@@ -210,12 +222,6 @@ void insanity_check()
     printf("decoded: %02x %02x\n", c1, c2);
 }
 
-Bitstream::Bitstream(int gpio_rdhead, int gpio_wrhead, int gpio_wren)
-    : gpio_rdhead(gpio_rdhead), gpio_wrhead(gpio_wrhead), gpio_wren(gpio_wren),
-    initialized(false)
-{
-}
-
 void Bitstream::init()
 {
     if (!initialized) {
@@ -231,6 +237,15 @@ void Bitstream::init()
         // calculate clkdiv to match desired MOD_FREQ
         constexpr float clkdiv = 125e6/(MOD_FREQ * 2 * MOD_HALFPERIOD);
 
+        //printf("TESTING GPIO_WRHEAD\n");
+        //gpio_init(this->gpio_wrhead);
+        //gpio_set_dir(this->gpio_wrhead, GPIO_OUT);
+        //gpio_put(this->gpio_wrhead, 1);
+        //sleep_ms(1000);
+        //gpio_put(this->gpio_wrhead, 0);
+        //printf("DONE\n");
+
+
         bitstream_tx_program_init(pio, sm_tx, offset_tx, gpio_wrhead, clkdiv);
         bitstream_rx_program_init(pio, sm_rx, offset_rx, gpio_rdhead, clkdiv);
 
@@ -238,8 +253,18 @@ void Bitstream::init()
         gpio_put(this->gpio_wren, 0); // 0 = read
         gpio_set_dir(this->gpio_wren, GPIO_OUT);
 
+        gpio_init(this->gpio_write_led);
+        gpio_put(this->gpio_write_led, 0);
+        gpio_set_dir(this->gpio_write_led, GPIO_OUT);
+
+        gpio_init(this->gpio_read_led);
+        gpio_put(this->gpio_read_led, 0);
+        gpio_set_dir(this->gpio_read_led, GPIO_OUT);
+
         initialized = true;
     }
+
+    bitsampler_or = 0;
 }
 
 void Bitstream::deinit()
@@ -259,8 +284,9 @@ void Bitstream::deinit()
 // switch on write head
 void Bitstream::write_enable(bool enable)
 {
-    printf("write_enable: gpio_wren %d=%d\n", this->gpio_wren, enable ? 1 : 0);
+    //printf("write_enable: gpio_wren %d=%d\n", this->gpio_wren, enable ? 1 : 0);
     gpio_put(this->gpio_wren, enable ? 1 : 0);
+    gpio_put(this->gpio_write_led, enable ? 1 : 0);
 }
 
 void Bitstream::test(int mode)
@@ -304,6 +330,9 @@ void Bitstream::test(int mode)
     // wait for the core to launch
     sleep_ms(10);
 
+    enable_print_sector_text = true; // print text as we read it
+    enable_print_sector_info = true; // and cool info
+
     //tx_sector_buf = {};
     //std::copy_n(std::string("alicetxt").begin(), file_id_sz, &tx_sector_buf.file_id[0]);
     sectors.set_file_id("alicetxt");
@@ -328,7 +357,7 @@ void Bitstream::test(int mode)
 
             // add a looong leader before the first block
             if (sector_num == 0) {
-                for (int i = 0; i < 256; ++i) {
+                for (int i = 0; i < BOT_LEADER_LEN; ++i) {
                     pio_sm_put_blocking(pio, sm_tx, LEADER);
                     pio_sm_put_blocking(pio, sm_tx, LEADER);
                     pio_sm_put_blocking(pio, sm_tx, LEADER);
@@ -338,7 +367,7 @@ void Bitstream::test(int mode)
 
             // pre-block leader for tuning up the DLL, it also creates a time gap
             // needed by the receiver to decode the block
-            for (int i = 0; i < 16; ++i) {
+            for (int i = 0; i < SECTOR_LEADER_LEN; ++i) {
                 pio_sm_put_blocking(pio, sm_tx, LEADER);
             }
             // mfm sync word
@@ -352,7 +381,7 @@ void Bitstream::test(int mode)
             }
 
             // post-sector gap
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < SECTOR_TRAILER_LEN; ++i) {
                 pio_sm_put_blocking(pio, sm_tx, LEADER);
             }
 
@@ -413,16 +442,14 @@ void Bitstream::test(int mode)
     if (mode & BS_RX) {
         correct_reed_solomon_destroy(rs_rx);
     }
+
+    deinit();
 }
 
 void
 Bitstream::test_sector_rewrite()
 {
     init();
-    write_enable(true);
-    sleep_ms(1000);
-    write_enable(false);
-    return;
 
     sanity_check();
     insanity_check();
@@ -449,7 +476,10 @@ Bitstream::test_sector_rewrite()
     pio_sm_set_enabled(pio, sm_tx, true);
     pio_sm_set_enabled(pio, sm_rx, true);
 
-    printf("Will edit/rewrite sector 5\n");
+    enable_print_sector_text = false; // don't waste time on printing contents
+    enable_print_sector_info = false; // switchover time is important
+        
+    printf("Will edit/rewrite sector %d\n", edit_sector_num);
 
     // load updated data (1 sector)
     size_t edittext_sz = get_edittext_size();
@@ -470,7 +500,7 @@ Bitstream::test_sector_rewrite()
     sleep_ms(100);
     sectors.prepare(edittext, 210, edit_sector_num);
 
-    printf("entering seek loop\n");
+    printf("seek sector %d\n", edit_sector_num);
 
     uint32_t out;
     for(;;) {
@@ -481,17 +511,25 @@ Bitstream::test_sector_rewrite()
             break;
         }
         if (out == MSG_SECTOR_READ_DONE) {
-            printf("SECTOR_READ_DONE %d\n", rx_sector_buf.sector_num);
             if (rx_sector_buf.sector_num == edit_sector_num - 1) {
-                bitsampler_or = 0x80000000;
-                printf("found sector %d, will replace the next one\n", rx_sector_buf.sector_num);
+                bitsampler_or = RL_BREAK;
+                multicore_reset_core1(); // easy way to stop it?
+                //printf("found sector %d, will replace the next one\n", rx_sector_buf.sector_num);
                 break;
+            }
+            else {
+                printf("SECTOR_READ_DONE %d\n", rx_sector_buf.sector_num);
             }
         }
         int c = getchar_timeout_us(0); 
         if (c != PICO_ERROR_TIMEOUT) {
+#if 0
+            printf("switch to write mode\n");
+            break;
+#else
             printf("abort\n");
             return;
+#endif
         }
     }
 
@@ -500,7 +538,7 @@ Bitstream::test_sector_rewrite()
 
     // pre-block leader for tuning up the DLL, it also creates a time gap
     // needed by the receiver to decode the block
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < SECTOR_LEADER_LEN + SECTOR_TRAILER_LEN; ++i) {
         pio_sm_put_blocking(pio, sm_tx, LEADER);
     }
     // mfm sync word
@@ -513,11 +551,13 @@ Bitstream::test_sector_rewrite()
         pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
     }
 
-    while (!pio_sm_is_tx_fifo_empty(pio, sm_tx)) putchar('.');
-    sleep_ms(4);
-
+    while (!pio_sm_is_tx_fifo_empty(pio, sm_tx));// putchar('.');
+    //sleep_ms(4);
     write_enable(false);
 
+    // shut down core1
+    multicore_reset_core1();
+    deinit();
+
     printf("Replaced sector %f\n", edit_sector_num);
-    
 }

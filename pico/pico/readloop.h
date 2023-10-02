@@ -10,6 +10,11 @@ enum readloop_state_t
     TS_TERMINATE,
 };
 
+enum readloop_special_t
+{
+    RL_BREAK = 0x80000000,  // request from bitsampler for read loop to break
+};
+
 const int MSG_SECTOR_READ_DONE = 0x100;
 
 
