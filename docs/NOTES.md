@@ -215,11 +215,11 @@ I performed successful sector data replacement tests. In the test I seek by read
 
 The idea is to have sectors pre-recorded initially. Pre-recorded sector info will not be modified during normal operation. So the tape format is going to be like so:
 
-SECTOR LEADER | SECTOR SYNC | SECTOR NUM | <front gap> | PAYLOAD LEADER | PAYLOAD SYNC | <payload> | <rear gap> 
+  | SECTOR LEADER | SECTOR SYNC | SECTOR NUM | front gap | PAYLOAD LEADER | PAYLOAD SYNC | PAYLOAD | rear gap |
 
-This is very much like a floppy disk format. Another level of matrioshka adds overhead, but it allows for a rigid sector structure that can be maintained in random-access usage.
+This is very much like floppy disk format. Another level of matrioshka adds overhead, but it allows for a rigid sector structure that can be maintained in random-access usage.
 
-Also it's possible to pack several payloads in one "physical" sector. Currently payload size is dictated by libcorrect, it's 255 bytes, 223 of which are user data. One physical sector could contain two or more payloads. Perhaps payloads could be block-interleaved for better resilience to long burst errors.
+It's possible to pack several payloads in one "physical" sector. Payload size is defined by libcorrect, it's 255 bytes, 223 of which are user data. One physical sector could contain one or more payloads, for example 4 seems like a reasonable compromise between sector length/time to seek and content size. Perhaps payloads within a sector could be block-interleaved for better resilience to long burst errors.
 
 SECTOR SYNC and PAYLOAD SYNC should be different, for example:
 
