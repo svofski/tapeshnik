@@ -19,8 +19,14 @@
 #define GPIO_TACHO 19
 
 #define MOD_HALFPERIOD  8     // number of clocks per half-period in modulation
-#define MOD_FREQ        6600  // max bit flipping frequency
-                              //
+                              // also hardcoded in bitstream.pio !
+#define MOD_FREQ        7000  // max bit flipping frequency
+                              // mfm: 9600 almost works but has trouble syncing
+                              //      3300 is rock solid
+                              //      6600 seems solid
+                              //      7000 is solid with A1 sync
+                              //      8000 feels good until it isn't
+                              // fm:  6600 ok
 #define SOLENOID_PULSE_MS 25
 
 #define GPIO_READ_LED   8
@@ -30,3 +36,15 @@
 #define BOT_LEADER_LEN      256
 #define SECTOR_LEADER_LEN   8
 #define SECTOR_TRAILER_LEN  4
+
+#define CODEC_MFM 1
+
+#ifdef CODEC_MFM
+#define modulate    mfm_encode_twobyte
+#define demodulate  mfm_decode_twobyte
+#endif
+
+#ifdef CODEC_FM
+#define modulate    fm_encode_twobyte
+#define demodulate  fm_decode_twobyte
+#endif

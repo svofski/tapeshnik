@@ -22,6 +22,7 @@ private:
 
     // switch to write mode
     void write_enable(bool enable);
+    void read_led(bool on);
 public:
     Bitstream(int gpio_rdhead, int gpio_wrhead, int gpio_wren, int gpio_read_led,
             int gpio_write_led)

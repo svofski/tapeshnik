@@ -7,6 +7,7 @@
 #include "pico/stdlib.h"
 #include "pico/time.h"
 #include "pico/multicore.h"
+#include "hardware/clocks.h"
 #include "hardware/pio.h"
 #include "bitstream.pio.h"
 
@@ -21,13 +22,16 @@
 #include "mfm.h"
 #include "util.h"
 
-// current working version is FM
-#define modulate    fm_encode_twobyte
-#define demodulate  fm_decode_twobyte
-
 // not modulated, these words are written bit by bit
+#ifdef CODEC_FM
 const uint32_t LEADER = 0xAAAAAAAA;
 const uint32_t SYNC   = 0xAAA1A1A1;
+#endif
+
+#ifdef CODEC_MFM
+const uint32_t LEADER = 0xCCCCCCCC;
+const uint32_t SYNC   = 0xCCCCCCC7;
+#endif
 
 const unsigned char * get_plaintext();
 size_t get_plaintext_size();
@@ -76,9 +80,22 @@ void fuckup_sector_data()
     }
 }
 
+int count_errors(uint8_t * uncorrected, uint8_t * corrected, size_t sz)
+{
+    int result = 0;
+
+    for (size_t i = 0; i < sz; ++i) {
+        //printf("%c==%c\n", uncorrected[i], corrected[i]);
+        result += uncorrected[i] != corrected[i];
+    }
+
+    return result;
+}
+
 // decodes and verifies data from rx_sector_buf
 int correct_sector_data()
 {
+    // entire rx_sector_buf layout as flat array
     uint8_t * rx_ptr = reinterpret_cast<uint8_t *>(&rx_sector_buf);
     ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, rx_fec_buf.begin(),
             rx_fec_buf.size(), rx_ptr);
@@ -100,12 +117,19 @@ int correct_sector_data()
     multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE);
 
     if (enable_print_sector_info) {
+        int nerrors = count_errors(&rx_fec_buf[0], rx_ptr, sizeof(rx_sector_buf));
+        float ber = 100.0 * nerrors / sizeof(rx_sector_buf);
+        if (crc != rx_sector_buf.crc16) {
+            ber = 100;
+        }
+
         std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.file_id[0]), file_id_sz);
         set_color(40, 33); // 40 = black bg, 33 = brown fg
-        printf("\nsector %d; file: '%s' crc actual: %04x expected: %04x ", 
+        printf("\nsector %d; file: '%s' crc actual: %04x expected: %04x nerrors=%d BER=%3.1f ", 
                 rx_sector_buf.sector_num,
                 filename.c_str(),
-                crc, rx_sector_buf.crc16);
+                crc, rx_sector_buf.crc16,
+                nerrors, ber);
         if (crc == rx_sector_buf.crc16) {
             printf("OK");
         }
@@ -194,12 +218,13 @@ void core1_entry()
 
 void sanity_check()
 {
+    printf("sanity_check (mfm): ");
     uint8_t cur_level = 0, prev_bit = 0;
-    uint32_t mfmbits = mfm_encode_twobyte(0x55,0xa1, &cur_level, &prev_bit);
+    uint32_t mfmbits = mfm_encode_twobyte(0x55, 0xa1, &cur_level, &prev_bit);
     for (int i = 0; i < 32; ++i) {
         putchar('0' + ((mfmbits >> (31-i)) & 1));
     }
-    printf(" %08x %08x\n", mfmbits, ~mfmbits);
+    printf(" %08x %08x    ", mfmbits, ~mfmbits);
 
     uint8_t c1, c2;
     uint8_t prev_level = 0;
@@ -209,12 +234,13 @@ void sanity_check()
 
 void insanity_check()
 {
+    printf("insanity_check (fm): ");
     uint8_t cur_level = 0, prev_bit = 0;
-    uint32_t fmbits = fm_encode_twobyte(0x55,0xa1, &cur_level, &prev_bit);
+    uint32_t fmbits = fm_encode_twobyte(0x55, 0xa1, &cur_level, &prev_bit);
     for (int i = 0; i < 32; ++i) {
         putchar('0' + ((fmbits >> (31-i)) & 1));
     }
-    printf(" %08x %08x\n", fmbits, ~fmbits);
+    printf(" %08x %08x    ", fmbits, ~fmbits);
 
     uint8_t c1, c2;
     uint8_t prev_level = 0;
@@ -234,8 +260,12 @@ void Bitstream::init()
         this->offset_rx = pio_add_program(pio, &bitstream_rx_program);
         printf("Receive program loaded at %d\n", offset_rx);
 
+        uint32_t f_cpu = clock_get_hz(clk_sys);
+
         // calculate clkdiv to match desired MOD_FREQ
-        constexpr float clkdiv = 125e6/(MOD_FREQ * 2 * MOD_HALFPERIOD);
+        const float clkdiv = (float)f_cpu/(MOD_FREQ * 2 * MOD_HALFPERIOD);
+
+        printf("CPU frequency: %d clkdiv=%f\n", f_cpu, clkdiv);
 
         //printf("TESTING GPIO_WRHEAD\n");
         //gpio_init(this->gpio_wrhead);
@@ -287,6 +317,11 @@ void Bitstream::write_enable(bool enable)
     //printf("write_enable: gpio_wren %d=%d\n", this->gpio_wren, enable ? 1 : 0);
     gpio_put(this->gpio_wren, enable ? 1 : 0);
     gpio_put(this->gpio_write_led, enable ? 1 : 0);
+}
+
+void Bitstream::read_led(bool on)
+{
+    gpio_put(this->gpio_read_led, on ? 1 : 0);
 }
 
 void Bitstream::test(int mode)
@@ -402,6 +437,8 @@ void Bitstream::test(int mode)
 
     int c;
     if (mode & BS_RX) {
+        read_led(true);
+
         if (!(mode & BS_TX)) {
             printf("waiting for rx (press d early to print debugbuf)\n");
         }
@@ -418,6 +455,7 @@ void Bitstream::test(int mode)
                 break;
             }
         }
+        read_led(false);
     }
 
     end_time = time_us_64();
@@ -501,6 +539,7 @@ Bitstream::test_sector_rewrite()
     //sectors.prepare(edittext, 210, edit_sector_num);
 
     printf("seek to sector %d\n", edit_sector_num);
+    read_led(true);
 
     uint32_t out;
     for(;;) {
@@ -532,6 +571,8 @@ Bitstream::test_sector_rewrite()
 #endif
         }
     }
+    
+    read_led(false);
 
     // pace out the previous sector trailer
     for (int i = 0; i < SECTOR_TRAILER_LEN; ++i) {
