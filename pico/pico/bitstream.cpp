@@ -126,6 +126,8 @@ void Bitstream::init()
         uint32_t f_cpu = clock_get_hz(clk_sys);
 
         // calculate clkdiv to match desired MOD_FREQ
+        // Fpio = MOD_FREQ * 2 * MOD_HALFPERIOD
+        // Fsmp = Fpio / (8 / 2), e.g. 56000 for MOD_FREQ = 7000 for raw import
         const float clkdiv = (float)f_cpu/(MOD_FREQ * 2 * MOD_HALFPERIOD);
 
         printf("CPU frequency: %d clkdiv=%f\n", f_cpu, clkdiv);
@@ -228,6 +230,7 @@ void Bitstream::llformat()
     extern volatile int mainloop_request;
 
     init();
+    pio_sm_set_enabled(pio, sm_tx, true);
 
     sanity_check();
     insanity_check();
@@ -338,13 +341,14 @@ void Bitstream::sector_scan(uint16_t sector_num)
     uint32_t out;
     int c;
     for(int i = 0; i < 45*60*10; ++i) {
-        multicore_fifo_pop_timeout_us(100000ULL, &out); // 0.1s
-        if (out == TS_TERMINATE) {
-            break;
-        }
-        else if ((out & 0xffff0000) ==  MSG_SECTOR_FOUND) {
-            uint16_t found_num = out & 0xffff;
-            printf("sector: %d\n", found_num);
+        if (multicore_fifo_pop_timeout_us(100000ULL, &out)) {
+            if (out == TS_TERMINATE) {
+                break;
+            }
+            else if ((out & 0xffff0000) == MSG_SECTOR_FOUND) {
+                uint16_t found_num = out & 0xffff;
+                printf("sector: %d\n", found_num);
+            }
         }
         c = getchar_timeout_us(0);
         if (c != PICO_ERROR_TIMEOUT) {

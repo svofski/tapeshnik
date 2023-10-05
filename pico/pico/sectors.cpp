@@ -202,9 +202,16 @@ SectorReader::readloop_callback(readloop_state_t state, uint32_t bits)
             {
                 uint8_t c1, c2;
                 demodulate(bits ^ inverted, &c1, &c2, &prev_level);
-                sector_nums[sector_nums_index] = c1 | (c2 << 8);
+                sector_nums[sector_nums_index] = (c1 << 8) | c2;
                 if (++sector_nums_index == 3) {
                     sector_number = pick_sector_num();
+
+                    for (size_t i = 0; i < sector_nums.size(); ++i) {
+                        printf("X %04x", sector_nums[i]);
+                    }
+                    putchar('\n');
+
+
                     multicore_fifo_push_blocking(MSG_SECTOR_FOUND + sector_number);
                     return TS_RESYNC_DATA;
                 }

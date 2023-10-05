@@ -27,6 +27,7 @@
                               //      7000 is solid with A1 sync
                               //      8000 feels good until it isn't
                               // fm:  6600 ok
+                              // debugbuf raw-to-samplerate = MOD_FREQ*4
 #define SOLENOID_PULSE_MS 25
 
 #define GPIO_READ_LED   8
