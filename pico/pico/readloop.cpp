@@ -32,145 +32,9 @@ void readloop_setparams(readloop_params_t args)
     debugbuf_index = 0;
 }
 
-// fixed timing reader with callback
-uint32_t readloop_simple(readloop_callback_t cb)
-{
-    uint32_t prev = 0;
-    int sample_t = 0;
-    int bitcount = 0;
-
-    readloop_state_t state = TS_RESYNC;
-
-    for (; state != TS_TERMINATE;) {
-        uint32_t cur = sample_one_bit();
-        ++sample_t;
-        if (sample_t == bitwidth) {
-            sample_t = 0;
-        }
-
-        if (state == TS_RESYNC) {
-            if (cur != prev) {
-                int dist_mid = abs(sample_t) - halfwidth;
-                int dist_0 = abs(sample_t);
-                int dist_p = abs(bitwidth - sample_t);
-
-                if (dist_0 < dist_mid || dist_p < dist_mid) {
-                    sample_t = 0;
-                }
-                else {
-                    sample_t = halfwidth;
-                }
-            }
-        }
-        else {
-            if (cur != prev) {
-                int dist_mid = abs(sample_t) - halfwidth;
-                int dist_0 = abs(sample_t);
-                int dist_p = abs(bitwidth - sample_t);
-
-                if (dist_0 < dist_mid) {
-                    sample_t = std::max(0, sample_t - 1);
-                }
-                if (dist_p < dist_mid) {
-                    sample_t += 1;
-                    if (sample_t >= bitwidth) {
-                        sample_t -= bitwidth;
-                    }
-                }
-            }
-        }
-
-        if (sample_t == halfwidth) {
-            // take sample hopefully in the middle 
-            mfm_bits = (mfm_bits << 1) | cur;
-
-            switch (state) {
-                case TS_RESYNC:
-                    state = cb(state, mfm_bits);
-                    bitcount = 0;
-                    break;
-                case TS_READ:
-                    if (++bitcount == 32) {
-                        bitcount = 0;
-                        state = cb(state, mfm_bits);
-                    }
-                    break;
-                case TS_TERMINATE:
-                    break;
-            }
-        }
-
-        prev = cur;
-    }
-
-    return 0;
-}
-
-// fixed timing reader with callback
-uint32_t readloop_naiive(readloop_callback_t cb)
-{
-    uint32_t prev = 0;
-    int sample_t = 0;
-    int bitcount = 0;
-
-    readloop_state_t state = TS_RESYNC;
-
-    const int shortpulse = bitwidth;
-    for (; state != TS_TERMINATE;) {
-        uint32_t cur = sample_one_bit();
-        if (cur & RL_BREAK) {
-            break;
-        }
-
-        ++sample_t;
-
-        // flip
-        if (cur != prev) {
-            // the long pulses are only present in sync
-            if (sample_t > 7 * shortpulse / 2) {// 3.5 pulse
-                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
-                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
-                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
-            }                                                
-            else if (sample_t > 5 * shortpulse / 2) { // 2.5 pulse
-                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
-                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
-            }
-            else if (sample_t > 3 * shortpulse / 2) { // 1.5 pulse
-                mfm_bits = (mfm_bits << 1) | prev; ++bitcount;
-            }
-
-            mfm_bits = (mfm_bits << 1) | cur; ++bitcount;
-
-            sample_t = 0;
-        }
-
-        switch (state) {
-            case TS_RESYNC:
-                state = cb(state, mfm_bits);
-                if (state == TS_READ) putchar('#');
-                bitcount = 0;
-                break;
-            case TS_READ:
-                if (bitcount >= 32) {
-                    int s = bitcount - 32;
-                    state = cb(state, mfm_bits >> s);
-                    bitcount -= 32;
-                }
-                break;
-            case TS_TERMINATE:
-                break;
-        }
-
-        prev = cur;
-    }
-
-    return 0;
-}
-
 // delay-locked loop tracker with PI-tuning
 // borrows from https://github.com/carrotIndustries/redbook/ by Lukas K.
-uint32_t readloop_delaylocked(readloop_callback_t cb)
+uint32_t readloop_delaylocked(readloop_callback_t cb, void * user)
 {
     uint32_t lastbit = 0;
     int phase_delta = 0;
@@ -197,7 +61,7 @@ uint32_t readloop_delaylocked(readloop_callback_t cb)
     uint32_t rawsample = 0;
 
     printf("%s, collecting debugbuf\n", __FUNCTION__);
-    readloop_state_t state = TS_RESYNC;
+    readloop_state_t state = TS_RESYNC_SECTOR;
 
     for (; state != TS_TERMINATE;) {
         uint32_t bit = sample_one_bit();
@@ -238,16 +102,18 @@ uint32_t readloop_delaylocked(readloop_callback_t cb)
             mfm_bits = (mfm_bits << 1) | bit;   // sample bit
 
             switch (state) {
-                case TS_RESYNC:
-                    state = cb(state, mfm_bits);
-                    if (state == TS_READ) {
+                case TS_RESYNC_SECTOR:
+                case TS_RESYNC_DATA:
+                    state = cb(state, mfm_bits, user);
+                    if (state == TS_READ_SECTOR || state == TS_READ_DATA) {
                         bitcount = 0;
                     }
                     break;
-                case TS_READ:
+                case TS_READ_SECTOR:
+                case TS_READ_DATA:
                     if (++bitcount == 32) {
                         bitcount = 0;
-                        state = cb(state, mfm_bits);
+                        state = cb(state, mfm_bits, user);
                     }
                     break;
                 case TS_TERMINATE:

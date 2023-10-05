@@ -14,6 +14,7 @@
 #include "bitstream.h"
 #include "readloop.h"
 #include "sectors.h"
+#include "tacho.h"
 
 #include "config.h"
 
@@ -22,23 +23,11 @@
 #include "mfm.h"
 #include "util.h"
 
-// not modulated, these words are written bit by bit
-#ifdef CODEC_FM
-const uint32_t LEADER = 0xAAAAAAAA;
-const uint32_t SYNC   = 0xAAA1A1A1;
-#endif
-
-#ifdef CODEC_MFM
-const uint32_t LEADER = 0xCCCCCCCC;
-const uint32_t SYNC   = 0xCCCCCCC7;
-#endif
-
 const unsigned char * get_plaintext();
 size_t get_plaintext_size();
 const unsigned char * get_edittext();
 size_t get_edittext_size();
 
-correct_reed_solomon * rs_rx = 0;
 
 // print sector payload as plain text in correct_sector_data()
 volatile bool enable_print_sector_text = false;
@@ -47,38 +36,25 @@ volatile bool enable_print_sector_info = false;
 PIO pio = pio0;
 uint sm_tx = 0, sm_rx = 1;
 
-uint8_t prev_level;
-
 int64_t start_time, end_time;
 
-uint32_t inverted = 0;
 
-// raw data are read in this buffer
-std::array<uint8_t, fec_block_length> rx_fec_buf;
-size_t rx_fec_index;
+//std::array<uint8_t, sector_data_sz> sector_buf;
+sector_data_t sector_buf;
+
+// will it make it to flash?
+constexpr std::array<uint8_t, sector_payload_sz> zero_payload{};
 
 // rs decoded sector payload
-sector_layout_t rx_sector_buf;
-int32_t rx_prev_sector_num;
-
 uint32_t bitsampler_or = 0;
+
+SectorReader * core1_reader;
 
 uint32_t bitsampler_pio()
 {
     return bitsampler_or | pio_sm_get_blocking(pio, sm_rx); // take next sample
 }
 
-
-// ruins raw sector data for testing
-// reed-solomon will recover up to fec_min_distance / 2 byte errors
-void fuckup_sector_data()
-{
-    constexpr int maxfuck = fec_min_distance / 2 + /* unrecoverable errors: */ 0;
-    for (int i = 0; i < maxfuck; ++i) {
-        ssize_t ofs = rand() % rx_fec_buf.size();
-        rx_fec_buf[ofs] ^= rand() & 0xff;
-    }
-}
 
 int count_errors(uint8_t * uncorrected, uint8_t * corrected, size_t sz)
 {
@@ -92,126 +68,13 @@ int count_errors(uint8_t * uncorrected, uint8_t * corrected, size_t sz)
     return result;
 }
 
-// decodes and verifies data from rx_sector_buf
-int correct_sector_data()
-{
-    // entire rx_sector_buf layout as flat array
-    uint8_t * rx_ptr = reinterpret_cast<uint8_t *>(&rx_sector_buf);
-    ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, rx_fec_buf.begin(),
-            rx_fec_buf.size(), rx_ptr);
-    if (decoded_sz <= 0) {
-        if (enable_print_sector_info) {
-            std::copy_n(rx_fec_buf.begin(), sizeof(rx_sector_buf), rx_ptr);
-            printf("\n\n--- unrecoverable error in sector %d  ---\n", rx_sector_buf.sector_num);
-        }
-    }
-    if (rx_sector_buf.sector_num != rx_prev_sector_num + 1) {
-        if (enable_print_sector_info) {
-            printf("\n\n--- sector out of sequence; previous: %d current: %d\n\n", 
-                    rx_prev_sector_num, rx_sector_buf.sector_num);
-        }
-    }
-
-    uint16_t crc = calculate_crc(&rx_sector_buf.data[0], payload_data_sz);
-
-    multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE);
-
-    if (enable_print_sector_info) {
-        int nerrors = count_errors(&rx_fec_buf[0], rx_ptr, sizeof(rx_sector_buf));
-        float ber = 100.0 * nerrors / sizeof(rx_sector_buf);
-        if (crc != rx_sector_buf.crc16) {
-            ber = 100;
-        }
-
-        std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.file_id[0]), file_id_sz);
-        set_color(40, 33); // 40 = black bg, 33 = brown fg
-        printf("\nsector %d; file: '%s' crc actual: %04x expected: %04x nerrors=%d BER=%3.1f ", 
-                rx_sector_buf.sector_num,
-                filename.c_str(),
-                crc, rx_sector_buf.crc16,
-                nerrors, ber);
-        if (crc == rx_sector_buf.crc16) {
-            printf("OK");
-        }
-        else {
-            set_color(41, 37);
-            printf("ERROR");
-        }
-        reset_color();
-        putchar('\n');
-    }
-
-    if (enable_print_sector_text) {
-        for (size_t i = 0; i < payload_data_sz; ++i) {
-            putchar(rx_sector_buf.data[i]);
-        }
-    }
-
-    rx_prev_sector_num = rx_sector_buf.sector_num;
-
-    if (rx_sector_buf.reserved0 & SECTOR_FLAG_EOF) {
-        print_color(45, 33, "EOF", "\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-// sector reader callback
-readloop_state_t sector_demod_reader(readloop_state_t state, uint32_t bits)
-{
-    if (state == TS_RESYNC) {
-        if (bits  == SYNC) {
-            rx_fec_index = 0;
-            //printf("\nSYNC %08x\n", bits); // printf is slow, can ruin sync
-            inverted = 0x0;
-            prev_level = 1;
-            return TS_READ;
-        }
-        else if (~bits == SYNC) {
-            rx_fec_index = 0;
-            //printf("\nSYNC INV %08x\n", bits);
-            inverted = 0xffffffff;
-            prev_level = 0;
-            return TS_READ;
-        }
-
-    }
-    else if (state == TS_READ) {
-        uint8_t c1, c2;
-        demodulate(bits ^ inverted, &c1, &c2, &prev_level);
-        rx_fec_buf[rx_fec_index++] = c1;
-        if (rx_fec_index < rx_fec_buf.size()) {
-            rx_fec_buf[rx_fec_index++] = c2;
-        }
-        if (rx_fec_index < rx_fec_buf.size()) {
-            return TS_READ;
-        }
-        else {
-#if LOOPBACK_TEST
-            fuckup_sector_data();
-#endif
-            int res = correct_sector_data();
-            if (res == -1) {
-                return TS_TERMINATE;
-            }
-            else {
-                return TS_RESYNC;
-            }
-        }
-    }
-    return state;
-}
 
 // core1 runs independently and pretends not to know anything
 // about received data
 void core1_entry()
 {
     printf("core1_entry\n");
-    rx_prev_sector_num = -1;
-    readloop_delaylocked(sector_demod_reader);
-    //readloop_simple(sector_demod_reader);
-    //readloop_naiive(sector_demod_reader);
+    readloop_delaylocked(SectorReader::readloop_callback_s, core1_reader);
 
     multicore_fifo_push_blocking(TS_TERMINATE);
 }
@@ -324,179 +187,140 @@ void Bitstream::read_led(bool on)
     gpio_put(this->gpio_read_led, on ? 1 : 0);
 }
 
-void Bitstream::test(int mode)
+void Bitstream::write_bot()
 {
+    for (size_t i = 0; i < BOT_LEADER_LEN; ++i) {
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+    }
+}
+
+void Bitstream::write_sector_data(SectorWriter& writer, const uint8_t * data,
+        size_t data_sz)
+{
+    // copy source data to sector buffer and compute parity
+    writer.prepare(data, data_sz);
+
+    // data leader
+    for (size_t i = 0; i < DATA_LEADER_LEN; ++i) {
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+    }
+    // data sync E3
+    pio_sm_put_blocking(pio, sm_tx, SYNC_DATA);
+
+    // the meat of the sector
+    uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
+    for (size_t i = 0; i < writer.size(); i += 2) {
+        uint32_t mfm_encoded = modulate(writer[i], writer[i + 1],
+                &mfm_cur_level, &mfm_prev_bit);
+        pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
+    }
+
+    for (size_t i = 0; i < SECTOR_TRAILER_LEN; ++i) {
+        pio_sm_put_blocking(pio, sm_tx, LEADER);
+    }
+}
+
+void Bitstream::llformat()
+{
+    extern volatile int mainloop_request;
+
+    init();
+
     sanity_check();
     insanity_check();
 
-    readloop_setparams(
-            {
-            .bitwidth = MOD_HALFPERIOD,
-            .Kp = 0.0333,
-            .Ki = 0.000001,
-            .alpha = 0.1,
-            .sampler = bitsampler_pio
-            });
+    SectorWriter writer(sector_buf);
 
-    // sectors
-    SectorWrite sectors;
-
-    init(); // hardware up
-
-    if (mode & BS_TX) pio_sm_set_enabled(pio, sm_tx, true);
-    if (mode & BS_RX) pio_sm_set_enabled(pio, sm_rx, true);
-
-    // load plaintext data
-    size_t psz = get_plaintext_size();
-    const unsigned char * plaintext = get_plaintext();
-    printf("plaintext size: %lu bytes\n", psz);
-
-    // initialize forward error correction
-    if (mode & BS_RX) {
-        rs_rx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
-                1, 1, fec_min_distance);
+    printf("Low-level format. Press shift-y to continue, any other key to abort: ");
+    if (getchar() != 'Y') {
+        printf("N\n");
+        return;
     }
 
-    pio_sm_clear_fifos(pio, sm_rx);
+    mainloop_request = 0;
+    wheel.rew();
+    sleep_ms(500);
+    while (1) {
+        putchar('>');
+        sleep_ms(100);
+        tight_loop_contents();
+        if (mainloop_request == ' ') {
+            wheel.stop();
+            sleep_ms(250);
+            break;
+        }
+    }
 
-    // launch the receiver in core1
-    if (mode & BS_RX) multicore_launch_core1(core1_entry);
+    printf("Press any key to abort...\n");
+    tacho_set_counter(0);
+    wheel.play();
+    //sleep_ms(5000);
 
-    // wait for the core to launch
-    sleep_ms(10);
+    // 6 seconds of plastic leader
+    for (int i = 0; i < 6000; ++i) {
+        int c = getchar_timeout_us(1000); 
+        if (c != PICO_ERROR_TIMEOUT) {
+            printf("aborted\n");
+            wheel.stop();
+            return;
+        }
+    }
 
-    enable_print_sector_text = true; // print text as we read it
-    enable_print_sector_info = true; // and cool info
+    write_enable(true);
+    write_bot();
 
-    //tx_sector_buf = {};
-    //std::copy_n(std::string("alicetxt").begin(), file_id_sz, &tx_sector_buf.file_id[0]);
-    sectors.set_file_id("alicetxt");
+    for (uint16_t sector_num = 0; ; ++sector_num) {
+        printf("Counter: %d Sector: %d\n", tacho_get_counter(),
+                sector_num);
 
-    // mark time to calculate effective payload CPS
-    start_time = time_us_64();
+        // sector leader
+        for (size_t i = 0; i < SECTOR_LEADER_LEN; ++i) {
+            pio_sm_put_blocking(pio, sm_tx, LEADER);
+        }
+        // sector sync C7
+        pio_sm_put_blocking(pio, sm_tx, SYNC_SECTOR);
 
-    if (mode & BS_TX) {
-        write_enable(true);
-        // encode the blocks and send them out
-        for (size_t input_ofs = 0, sector_num = 0; input_ofs < psz; input_ofs += payload_data_sz) {
-            int data_sz = std::min(psz - input_ofs, payload_data_sz);
+        // 16-bit sector number repeated SECTOR_NUM_REPEATS times
+        uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
+        uint32_t mfm_encoded = modulate(sector_num >> 8, sector_num & 255,
+                &mfm_cur_level, &mfm_prev_bit);
+        for (size_t i = 0; i < SECTOR_NUM_REPEATS; ++i) {
+            pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
+        }
 
-            if (data_sz + input_ofs >= psz) {
-                sectors.set_eof();
-            }
+        write_sector_data(writer, zero_payload.begin(), zero_payload.size());
 
-            // this takes a moment: prepare all data before writing
-            //encode_block(rs_tx, plaintext + input_ofs, data_sz, &tx_sector_buf, tx_fec_buf.begin());
-            sectors.prepare(plaintext + input_ofs, data_sz, sector_num);
+        // check end conditions
+        if (wheel.get_position() != WP_PLAY) {
+            printf("EOT\n");
+            break;
+        }
 
-            // add a looong leader before the first block
-            if (sector_num == 0) {
-                for (int i = 0; i < BOT_LEADER_LEN; ++i) {
-                    pio_sm_put_blocking(pio, sm_tx, LEADER);
-                    pio_sm_put_blocking(pio, sm_tx, LEADER);
-                    pio_sm_put_blocking(pio, sm_tx, LEADER);
-                    pio_sm_put_blocking(pio, sm_tx, LEADER);
-                }
-            }
-
-            // pre-block leader for tuning up the DLL, it also creates a time gap
-            // needed by the receiver to decode the block
-            for (int i = 0; i < SECTOR_LEADER_LEN; ++i) {
-                pio_sm_put_blocking(pio, sm_tx, LEADER);
-            }
-            // sync word
-            pio_sm_put_blocking(pio, sm_tx, SYNC);
-            uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
-
-            for (size_t i = 0; i < sectors.size(); i += 2) {
-                uint32_t mfm_encoded = modulate(sectors[i], 
-                        sectors[i + 1], &mfm_cur_level, &mfm_prev_bit);
-                pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
-                //printf("%02x %02x ", sectors[i], sectors[i + 1]);
-            }
-
-            // post-sector gap
-            for (int i = 0; i < SECTOR_TRAILER_LEN; ++i) {
-                pio_sm_put_blocking(pio, sm_tx, LEADER);
-            }
-
-            if (!(mode & BS_RX)) {
-                printf("wrote sector %d crc %04x\n", sector_num, sectors.crc16());
-            }
-
-            // advance sector and block numbers
-            //++tx_sector_buf.sector_num;
-            ++sector_num; 
-#if SINGLE_SECTOR_TEST
-            break;// TEST
-#endif
+        int c = getchar_timeout_us(0); 
+        if (c != PICO_ERROR_TIMEOUT) {
+            printf("abort\n");
+            break;
         }
     }
 
     write_enable(false);
-
-    int c;
-    if (mode & BS_RX) {
-        read_led(true);
-
-        if (!(mode & BS_TX)) {
-            printf("waiting for rx (press d early to print debugbuf)\n");
-        }
-        // wait for the message from the receiver before shutting down
-        //multicore_fifo_pop_blocking();
-        uint32_t out;
-        for(int i = 0; i < 120*10; ++i) {
-            multicore_fifo_pop_timeout_us(100000ULL, &out); // 0.1s
-            if (out == TS_TERMINATE) {
-                break;
-            }
-            c = getchar_timeout_us(0); 
-            if (c != PICO_ERROR_TIMEOUT) {
-                break;
-            }
-        }
-        read_led(false);
-    }
-
-    end_time = time_us_64();
-
-    uint32_t timediff = end_time - start_time;
-    uint32_t timediff_ms = timediff / 1000;
-    uint32_t timediff_s = timediff_ms / 1000;
-    printf("elapsed time=%dms, speed=%dcps\n", timediff_ms,
-            psz/timediff_s);
-
-    if (mode & BS_RX) {
-        // shut down core1
-        multicore_reset_core1();
-    }
-
-#if 1
-    if (c == 'd') {
-        readloop_dump_debugbuf();
-    }
-#endif
-
-    if (mode & BS_RX) {
-        correct_reed_solomon_destroy(rs_rx);
-    }
 
     deinit();
 }
 
-void
-Bitstream::test_sector_rewrite()
+void Bitstream::sector_scan(uint16_t sector_num)
 {
+    printf("sector_scan(%d):\n", sector_num);
+
+    SectorReader reader(sector_buf);
     init();
 
-    sanity_check();
-    insanity_check();
-
-    constexpr int edit_sector_num = 3;
-
-    printf("will attempt to rewrite sector %d, tape should be rewound and moving\n",
-            edit_sector_num);
-    sleep_ms(100);
+    pio_sm_set_enabled(pio, sm_rx, true);
+    pio_sm_clear_fifos(pio, sm_rx);
+    read_led(true);
 
     readloop_setparams(
             {
@@ -507,107 +331,31 @@ Bitstream::test_sector_rewrite()
             .sampler = bitsampler_pio
             });
 
-    // sectors
-    SectorWrite sectors;
-    init();
-
-    pio_sm_set_enabled(pio, sm_tx, true);
-    pio_sm_set_enabled(pio, sm_rx, true);
-
-    enable_print_sector_text = false; // don't waste time on printing contents
-    enable_print_sector_info = false; // switchover time is important
-        
-    printf("Will edit/rewrite sector %d\n", edit_sector_num);
-
-    // load updated data (1 sector)
-    size_t edittext_sz = get_edittext_size();
-    const unsigned char * edittext = get_edittext();
-
-    rs_rx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
-            1, 1, fec_min_distance);
-
-    pio_sm_clear_fifos(pio, sm_rx);
-    pio_sm_clear_fifos(pio, sm_tx);
-
+    core1_reader = &reader;
     multicore_launch_core1(core1_entry);
     sleep_ms(10);
 
-    // prepare write data
-    sectors.set_file_id("alicetxt");
-    printf("edittext (%d):\n%s\n", edittext_sz, edittext);
-    sleep_ms(100);
-    //sectors.prepare(edittext, 210, edit_sector_num);
-
-    printf("seek to sector %d\n", edit_sector_num);
-    read_led(true);
-
     uint32_t out;
-    for(;;) {
-        out = 0;
-        multicore_fifo_pop_timeout_us(100000, &out); 
+    int c;
+    for(int i = 0; i < 45*60*10; ++i) {
+        multicore_fifo_pop_timeout_us(100000ULL, &out); // 0.1s
         if (out == TS_TERMINATE) {
-            printf("reader requested termination\n");
             break;
         }
-        if (out == MSG_SECTOR_READ_DONE) {
-            if (rx_sector_buf.sector_num == edit_sector_num - 1) {
-                bitsampler_or = RL_BREAK; // tell the read loop to break
-                multicore_reset_core1();  // kill the core
-                //printf("found sector %d, will replace the next one\n", rx_sector_buf.sector_num);
-                break;
-            }
-            else {
-                printf("SECTOR_READ_DONE %d\n", rx_sector_buf.sector_num);
-            }
+        else if ((out & 0xffff0000) ==  MSG_SECTOR_FOUND) {
+            uint16_t found_num = out & 0xffff;
+            printf("sector: %d\n", found_num);
         }
-        int c = getchar_timeout_us(0); 
+        c = getchar_timeout_us(0);
         if (c != PICO_ERROR_TIMEOUT) {
-#if 0
-            printf("switch to write mode\n");
             break;
-#else
-            printf("abort\n");
-            return;
-#endif
-        }
+        }        
     }
-    
+    if (c == 'd') {
+        readloop_dump_debugbuf();
+    }
+
     read_led(false);
-
-    // pace out the previous sector trailer
-    for (int i = 0; i < SECTOR_TRAILER_LEN; ++i) {
-        pio_sm_put_blocking(pio, sm_tx, LEADER);
-    }
-    while (!pio_sm_is_tx_fifo_empty(pio, sm_tx));// putchar('.');
-
-    // encode on the fly like normal write
-    sectors.prepare(edittext, edittext_sz - 1, edit_sector_num);
-
-    // no time to lose, switch like fuck into write-mode
-    write_enable(true);
-
-    // pre-block leader for tuning up the DLL, it also creates a time gap
-    // needed by the receiver to decode the block
-    for (int i = 0; i < SECTOR_LEADER_LEN; ++i) {
-        pio_sm_put_blocking(pio, sm_tx, LEADER);
-    }
-    // sync word
-    pio_sm_put_blocking(pio, sm_tx, SYNC);
-    uint8_t mfm_cur_level = 1, mfm_prev_bit = 1;
-
-    for (size_t i = 0; i < sectors.size(); i += 2) {
-        uint32_t mfm_encoded = modulate(sectors[i], 
-                sectors[i + 1], &mfm_cur_level, &mfm_prev_bit);
-        pio_sm_put_blocking(pio, sm_tx, mfm_encoded);
-    }
-
-    while (!pio_sm_is_tx_fifo_empty(pio, sm_tx));// putchar('.');
-    //sleep_ms(4);
-    write_enable(false);
-
-    // shut down core1
     multicore_reset_core1();
     deinit();
-
-    printf("Replaced sector %f\n", edit_sector_num);
 }

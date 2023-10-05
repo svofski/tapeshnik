@@ -35,7 +35,8 @@
 
 #define BOT_LEADER_LEN      256
 #define SECTOR_LEADER_LEN   8
-#define SECTOR_TRAILER_LEN  4
+#define DATA_LEADER_LEN     8
+#define SECTOR_TRAILER_LEN  8
 
 #define CODEC_MFM 1
 
@@ -48,3 +49,19 @@
 #define modulate    fm_encode_twobyte
 #define demodulate  fm_decode_twobyte
 #endif
+
+// not modulated, these words are written bit by bit
+#ifdef CODEC_FM
+constexpr uint32_t LEADER = 0xAAAAAAAA;
+constexpr uint32_t SYNC   = 0xAAA1A1A1;
+#endif
+
+#ifdef CODEC_MFM
+constexpr uint32_t LEADER       = 0xCCCCCCCC;
+constexpr uint32_t SYNC_SECTOR  = 0xCCCCCCC7;
+constexpr uint32_t SYNC_DATA    = 0xCCCCCCE3;
+#endif
+
+#define SECTOR_NUM_REPEATS  4
+
+constexpr uint32_t FEC_BLOCKS_PER_SECTOR = 4;

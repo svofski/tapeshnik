@@ -18,13 +18,13 @@
 
 #define ML_NO_REQUEST   0
 #define ML_STOP_REQUEST ' '
-int mainloop_request = ML_NO_REQUEST;
+volatile int mainloop_request = ML_NO_REQUEST;
 
 Boost boost(GPIO_EBOOST);
 Motor motor(boost, GPIO_MOTOR_CONTROL);
 Solenoid solenoid(GPIO_SOLENOID_CONTROL);
 Wheel wheel(motor, solenoid, GPIO_MODE_ENTRY);
-Bitstream bstream(GPIO_RDHEAD, GPIO_WRHEAD, GPIO_WREN, GPIO_READ_LED,
+Bitstream bstream(wheel, GPIO_RDHEAD, GPIO_WRHEAD, GPIO_WREN, GPIO_READ_LED,
         GPIO_WRITE_LED);
 
 void request_wheel_stop()
@@ -139,13 +139,17 @@ int main() {
                       break;
             case '3': freq_8(30000);
                       break;
-            case '5': bstream.test();
+            //case '5': bstream.test();
+            //          break;
+            //case 'w': bstream.test(BS_TX);
+            //          break;
+            //case 'l': bstream.test(BS_RX);
+            //          break;
+            //case 'e': bstream.test_sector_rewrite();
+            //          break;
+            case 'F': bstream.llformat();
                       break;
-            case 'w': bstream.test(BS_TX);
-                      break;
-            case 'l': bstream.test(BS_RX);
-                      break;
-            case 'e': bstream.test_sector_rewrite();
+            case 'l': bstream.sector_scan(65535);
                       break;
             case 10:
             case 13:
