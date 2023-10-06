@@ -41,6 +41,7 @@ int64_t start_time, end_time;
 
 //std::array<uint8_t, sector_data_sz> sector_buf;
 sector_data_t sector_buf;
+std::array<uint8_t, sector_payload_sz> decoded_buf;
 
 // will it make it to flash?
 constexpr std::array<uint8_t, sector_payload_sz> zero_payload{};
@@ -314,11 +315,22 @@ void Bitstream::llformat()
     deinit();
 }
 
+void sizeof_checks()
+{
+    printf("chunk_payload_t: %d\n", sizeof(chunk_payload_t));
+    printf("chunk_data_t: %d\n", sizeof(chunk_data_t));
+    printf("full_chunk_t: %d\n", sizeof(full_chunk_t));
+    printf("sector_data_t: %d\n", sizeof(sector_data_t));
+    printf("sector_payload_sz: %d\n", sector_payload_sz);
+}
+
 void Bitstream::sector_scan(uint16_t sector_num)
 {
     printf("sector_scan(%d):\n", sector_num);
 
-    SectorReader reader(sector_buf);
+    sizeof_checks();
+
+    SectorReader reader(sector_buf, decoded_buf.begin());
     init();
 
     pio_sm_set_enabled(pio, sm_rx, true);
@@ -347,7 +359,25 @@ void Bitstream::sector_scan(uint16_t sector_num)
             }
             else if ((out & 0xffff0000) == MSG_SECTOR_FOUND) {
                 uint16_t found_num = out & 0xffff;
-                printf("sector: %d\n", found_num);
+                printf("found: %d\n", found_num);
+            }
+            else if ((out & 0xffff0000) == MSG_SECTOR_READ_DONE) {
+                uint16_t found_num = out & 0xffff;
+                printf("read_done: %d\n", found_num);
+
+                printf("raw:\n");
+                for (int n = 0; n < 4; ++n) {
+                    printf("chunk %d\n", n);
+                    for (size_t i = 0; i < sector_buf.chunks[n].rawbuf.size(); ++i) {
+                        printf("%02x ", sector_buf.chunks[n].rawbuf[i]);
+                    }
+                }
+                printf("decoded:\n");
+                for (size_t i = 0; i < decoded_buf.size(); ++i) {
+                    //putchar(decoded_buf[i]);
+                    printf("%02x ", decoded_buf[i]);
+                }
+                putchar('\n');
             }
         }
         c = getchar_timeout_us(0);

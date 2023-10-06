@@ -66,7 +66,8 @@ uint16_t calculate_crc(uint8_t * data, size_t len)
     return MODBUS_CRC16_v3(data, len);
 }
 
-SectorReader::SectorReader(sector_data_t& rxbuf) : rxbuf(rxbuf)
+SectorReader::SectorReader(sector_data_t& rxbuf, uint8_t * decoded_buf)
+    : rxbuf(rxbuf), decoded_buf(decoded_buf)
 {
     rs_rx = correct_reed_solomon_create(correct_rs_primitive_polynomial_ccsds,
             1, 1, fec_min_distance);
@@ -80,14 +81,36 @@ SectorReader::~SectorReader()
 // decodes and verifies data from rx_sector_buf
 int SectorReader::correct_sector_data()
 {
+    // decode all blocks in sector
+
+    uint8_t * dst = decoded_buf;
+    for (size_t n = 0; n < FEC_BLOCKS_PER_SECTOR; ++n) {
+        ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, 
+            /* encoded */         rxbuf.chunks[n].rawbuf.begin(),
+            /* encoded_length */  fec_block_length,
+            /* msg */             dst);
+        if (decoded_sz <= 0) {
+            std::copy_n(rxbuf.chunks[n].rawbuf.begin(), payload_data_sz, dst);
+            printf("\n\n--- error ---\n");
+        }
+        uint16_t crc = calculate_crc(dst, payload_data_sz);
+        if (crc != rxbuf.chunks[n].p.payload.crc16) {
+            printf("\n\n--- crc error ---\n");
+        }
+
+        dst += sizeof(chunk_payload_t);
+    }
+
+
+
 #if 0
     // entire rx_sector_buf layout as flat array
     uint8_t * rx_ptr = reinterpret_cast<uint8_t *>(&rx_sector_buf);
     ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, rx_fec_buf.begin(),
             rx_fec_buf.size(), rx_ptr);
     if (decoded_sz <= 0) {
+        std::copy_n(rx_fec_buf.begin(), sizeof(rx_sector_buf), rx_ptr);
         if (enable_print_sector_info) {
-            std::copy_n(rx_fec_buf.begin(), sizeof(rx_sector_buf), rx_ptr);
             printf("\n\n--- unrecoverable error in sector %d  ---\n", rx_sector_buf.sector_num);
         }
     }
@@ -206,11 +229,10 @@ SectorReader::readloop_callback(readloop_state_t state, uint32_t bits)
                 if (++sector_nums_index == 3) {
                     sector_number = pick_sector_num();
 
-                    for (size_t i = 0; i < sector_nums.size(); ++i) {
-                        printf("X %04x", sector_nums[i]);
-                    }
-                    putchar('\n');
-
+                    // for (size_t i = 0; i < sector_nums.size(); ++i) {
+                    //     printf("X %04x", sector_nums[i]);
+                    // }
+                    // putchar('\n');
 
                     multicore_fifo_push_blocking(MSG_SECTOR_FOUND + sector_number);
                     return TS_RESYNC_DATA;
@@ -250,6 +272,7 @@ SectorReader::readloop_callback(readloop_state_t state, uint32_t bits)
                     fuckup_sector_data();
 #endif
                     int res = correct_sector_data();
+                    multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE + sector_number);
                     if (res == -1) {
                         return TS_TERMINATE;
                     }

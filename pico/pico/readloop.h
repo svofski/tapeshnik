@@ -17,9 +17,8 @@ enum readloop_special_t
     RL_BREAK = 0x80000000,  // request from bitsampler for read loop to break
 };
 
-const int MSG_SECTOR_READ_DONE = 0x100;
-
-const int MSG_SECTOR_FOUND = 0x10000; // MSG_SECTOR_FOUND + sector no
+const int MSG_SECTOR_FOUND =      0x10000; // MSG_SECTOR_FOUND + sector no
+const int MSG_SECTOR_READ_DONE =  0x20000; // MSG_SECTOR_FOUND + sector no
 
 
 // reader callback: receives tracking state and 32 sampled bits, returns new state
