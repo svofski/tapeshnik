@@ -48,4 +48,7 @@ public:
     void llformat();
 
     void sector_scan(uint16_t sector_num);
+    void replace_sector_data(uint16_t sector_num, const uint8_t * data, size_t data_sz);
+
+    void test_write();
 };

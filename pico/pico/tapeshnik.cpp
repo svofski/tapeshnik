@@ -151,6 +151,8 @@ int main() {
                       break;
             case 'l': bstream.sector_scan(65535);
                       break;
+            case 'w': bstream.test_write();
+                      break;
             case 10:
             case 13:
                       printf("\nHelp: m=motor, p=play, f=ff, r=rew, space=stop, 0=zero counter\n");

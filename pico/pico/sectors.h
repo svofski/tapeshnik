@@ -44,6 +44,8 @@ union sector_data_t {
 // 892: 4x chunk_payload_t (with crc16 inline)
 constexpr size_t sector_payload_sz = sizeof(chunk_payload_t) * FEC_BLOCKS_PER_SECTOR;
 
+constexpr size_t sector_user_data_sz = payload_data_sz * FEC_BLOCKS_PER_SECTOR;
+
 uint16_t calculate_crc(uint8_t * data, size_t len);
 
 // singletonize or make it a proper class

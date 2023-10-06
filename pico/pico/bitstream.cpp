@@ -324,6 +324,69 @@ void sizeof_checks()
     printf("sector_payload_sz: %d\n", sector_payload_sz);
 }
 
+void Bitstream::replace_sector_data(uint16_t sector_num, const uint8_t * data, size_t data_sz)
+{
+    SectorReader reader(sector_buf, decoded_buf.begin());
+    SectorWriter writer(sector_buf);
+
+    writer.prepare(data, data_sz);
+
+    bool write = false;
+
+    init();
+
+    pio_sm_set_enabled(pio, sm_rx, true);
+    pio_sm_set_enabled(pio, sm_tx, true);
+    pio_sm_clear_fifos(pio, sm_rx);
+    read_led(true);
+
+    readloop_setparams(
+            {
+            .bitwidth = MOD_HALFPERIOD,
+            .Kp = 0.0333,
+            .Ki = 0.000001,
+            .alpha = 0.1,
+            .sampler = bitsampler_pio
+            });
+
+    core1_reader = &reader;
+    multicore_launch_core1(core1_entry);
+    sleep_ms(10);
+
+    uint32_t out;
+    int c;
+    for(int i = 0; i < 45*60*10; ++i) {
+        if (multicore_fifo_pop_timeout_us(100000ULL, &out)) {
+            if (out == TS_TERMINATE) {
+                break;
+            }
+            else if ((out & 0xffff0000) == MSG_SECTOR_FOUND) {
+                uint16_t found_num = out & 0xffff;
+                printf("found: %d\n", found_num);
+
+                if (found_num == sector_num) {
+                    write = true;
+                    break;
+                }
+            }
+        }
+        c = getchar_timeout_us(0);
+        if (c != PICO_ERROR_TIMEOUT) {
+            break;
+        }        
+    }
+    multicore_reset_core1();
+    read_led(false);
+
+    if (write) {
+        write_enable(true);
+        write_sector_data(writer, data, data_sz);
+        write_enable(false);
+    }
+
+    deinit();
+}
+
 void Bitstream::sector_scan(uint16_t sector_num)
 {
     printf("sector_scan(%d):\n", sector_num);
@@ -364,18 +427,19 @@ void Bitstream::sector_scan(uint16_t sector_num)
             else if ((out & 0xffff0000) == MSG_SECTOR_READ_DONE) {
                 uint16_t found_num = out & 0xffff;
                 printf("read_done: %d\n", found_num);
-
-                printf("raw:\n");
-                for (int n = 0; n < 4; ++n) {
-                    printf("chunk %d\n", n);
-                    for (size_t i = 0; i < sector_buf.chunks[n].rawbuf.size(); ++i) {
-                        printf("%02x ", sector_buf.chunks[n].rawbuf[i]);
-                    }
-                }
+                //printf("raw:\n");
+                //for (int n = 0; n < 4; ++n) {
+                //    printf("chunk %d\n", n);
+                //    for (size_t i = 0; i < sector_buf.chunks[n].rawbuf.size(); ++i) {
+                //        printf("%02x ", sector_buf.chunks[n].rawbuf[i]);
+                //    }
+                //}
                 printf("decoded:\n");
-                for (size_t i = 0; i < decoded_buf.size(); ++i) {
-                    //putchar(decoded_buf[i]);
-                    printf("%02x ", decoded_buf[i]);
+                for (int n = 0; n < 4; ++n) {
+                    for (size_t i = 0; i < payload_data_sz; ++i) {
+                        putchar(decoded_buf[n * fec_message_sz + i]);
+                        //printf("%02x ", decoded_buf[i]);
+                    }
                 }
                 putchar('\n');
             }
@@ -392,4 +456,24 @@ void Bitstream::sector_scan(uint16_t sector_num)
     read_led(false);
     multicore_reset_core1();
     deinit();
+}
+
+void Bitstream::test_write()
+{
+    printf("Will write data in sectors 1...\n");
+    //const unsigned char * get_plaintext();
+    //size_t get_plaintext_size();
+
+    const uint8_t * data = get_plaintext();
+    ssize_t data_sz = static_cast<ssize_t>(get_plaintext_size());
+
+    uint16_t sector_num = 1;
+    while (data_sz > 0) {
+        replace_sector_data(sector_num, data, data_sz);
+        data += payload_data_sz * FEC_BLOCKS_PER_SECTOR;
+        data_sz -= payload_data_sz * FEC_BLOCKS_PER_SECTOR;
+        ++sector_num;
+    }
+
+    printf("done\n");
 }
