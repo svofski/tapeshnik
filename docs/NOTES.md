@@ -205,4 +205,27 @@ After everything was sorted out, I managed to read the data from my cassette.
 
 [Tapeshnik is alive again (youtube short)](https://youtube.com/shorts/GOCvX2H30LI)
 
+### Encoding, speed and errors
+
+The new board with shielded cable to the heads work much better than my previous build. I've switched the encoding to MFM, although I'm not sure if it really performs better than FM. It seems that I can't reliably go beyond 700cps net. Which is a very respectable speed, but I feel that it could be better yet. Anything faster than that is prone to unrecoverable errors.
+
+I performed successful sector data replacement tests. In the test I seek by reading sectors prior to the one that's to be replaced, switch into write mode and write new data. It works well, although I suspect that there is a misalignment caused by slight time deviations and eventually rewriting a sector might shift it, or other sectors. So I need a new sectoring scheme.
+
+#### New sectoring scheme
+
+The idea is to have sectors pre-recorded initially. Pre-recorded sector info will not be modified during normal operation. So the tape format is going to be like so:
+
+  | SECTOR LEADER | SECTOR SYNC | SECTOR NUM | front gap | PAYLOAD LEADER | PAYLOAD SYNC | PAYLOAD | rear gap |
+
+This is very much like floppy disk format. Another level of matrioshka adds overhead, but it allows for a rigid sector structure that can be maintained in random-access usage.
+
+It's possible to pack several payloads in one "physical" sector. Payload size is defined by libcorrect, it's 255 bytes, 223 of which are user data. One physical sector could contain one or more payloads, for example 4 seems like a reasonable compromise between sector length/time to seek and content size. Perhaps payloads within a sector could be block-interleaved for better resilience to long burst errors.
+
+SECTOR SYNC and PAYLOAD SYNC should be different, for example:
+
+SECTOR SYNC: 1100110011000111  CCC7
+PAYLOAD SYNC:1100110011100011  CCE3
+
+SECTOR NUM can be tripled for majority vote error correction.
+
 To be continued...
