@@ -215,17 +215,36 @@ I performed successful sector data replacement tests. In the test I seek by read
 
 The idea is to have sectors pre-recorded initially. Pre-recorded sector info will not be modified during normal operation. So the tape format is going to be like so:
 
-  | SECTOR LEADER | SECTOR SYNC | SECTOR NUM | front gap | PAYLOAD LEADER | PAYLOAD SYNC | PAYLOAD | rear gap |
+  | SECTOR LEADER | SECTOR SYNC | SECTOR NUM x3 | PAYLOAD LEADER | PAYLOAD SYNC | PAYLOAD | rear gap |
 
 This is very much like floppy disk format. Another level of matrioshka adds overhead, but it allows for a rigid sector structure that can be maintained in random-access usage.
 
 It's possible to pack several payloads in one "physical" sector. Payload size is defined by libcorrect, it's 255 bytes, 223 of which are user data. One physical sector could contain one or more payloads, for example 4 seems like a reasonable compromise between sector length/time to seek and content size. Perhaps payloads within a sector could be block-interleaved for better resilience to long burst errors.
 
+223 * 4 = 892 bytes
+
+To plug this into Vector-06c MicroDOS, the sectors should be 1024 bytes long. The format is 80 tracks, 2 sides, 5 sectors. 223 * 5 = 1115, so 91 bytes or 8.2% wasted. Not great.
+Or if we write it track by track, 223*23 = 5129 vs 1024*5 = 5120 --- that's a great match, but 23 blocks per record is a bit too much.
+
 SECTOR SYNC and PAYLOAD SYNC should be different, for example:
 
-SECTOR SYNC: 1100110011000111  CCC7
-PAYLOAD SYNC:1100110011100011  CCE3
+  SECTOR SYNC: 1100110011000111  CCC7
+  
+  PAYLOAD SYNC:1100110011100011  CCE3
 
 SECTOR NUM can be tripled for majority vote error correction.
 
-To be continued...
+#### Hardsectors update
+
+Implemented the above scheme in "hardsectors" branch, merged to master. One sector is 4x FEC payloads, so 892 bytes. CRC is part of data and is counted for each subblock independently for the sake of simplicity. Sector rewriting works well. The only seeking method so far is linear reading until the sector is found.
+
+There are several options to help seeks:
+
+ * use tape counter to wind the tape approximately in position, then read linearly
+ * use little spaces between sectors to count the sectors during ff/rew
+
+The problem with tape counter as it is now is that it's fairly unreliable when changing tape direction. A definitive way would be replacing the sensor with a quadrature sensor. It's worth trying to understand the cause of this backlash and possibly compensate for it.
+
+The spaces is something that sounds not very reliable because the head is not in full contact with the tape during ff/rew. It works for long pauses between songs, but probably not for sub-second pauses between sectors.
+
+
