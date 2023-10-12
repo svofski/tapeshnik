@@ -23,6 +23,8 @@
 #include "mfm.h"
 #include "util.h"
 
+extern volatile int mainloop_request;
+
 const unsigned char * get_plaintext();
 size_t get_plaintext_size();
 const unsigned char * get_edittext();
@@ -56,7 +58,6 @@ uint32_t bitsampler_pio()
     return bitsampler_or | pio_sm_get_blocking(pio, sm_rx); // take next sample
 }
 
-
 int count_errors(uint8_t * uncorrected, uint8_t * corrected, size_t sz)
 {
     int result = 0;
@@ -74,7 +75,7 @@ int count_errors(uint8_t * uncorrected, uint8_t * corrected, size_t sz)
 // about received data
 void core1_entry()
 {
-    printf("core1_entry\n");
+    //printf("core1_entry\n");
     readloop_delaylocked(SectorReader::readloop_callback_s, core1_reader);
 
     multicore_fifo_push_blocking(TS_TERMINATE);
@@ -228,7 +229,6 @@ void Bitstream::write_sector_data(SectorWriter& writer, const uint8_t * data,
 
 void Bitstream::llformat()
 {
-    extern volatile int mainloop_request;
 
     init();
     pio_sm_set_enabled(pio, sm_tx, true);
@@ -387,6 +387,27 @@ void Bitstream::replace_sector_data(uint16_t sector_num, const uint8_t * data, s
     deinit();
 }
 
+void Bitstream::dump_raw_sector_data()
+{
+    printf("raw:\n");
+    for (int n = 0; n < 4; ++n) {
+        printf("chunk %d\n", n);
+        for (size_t i = 0; i < sector_buf.chunks[n].rawbuf.size(); ++i) {
+            printf("%02x ", sector_buf.chunks[n].rawbuf[i]);
+        }
+    }
+}
+
+void Bitstream::dump_decoded_sector_data()
+{
+    for (int n = 0; n < 4; ++n) {
+        for (size_t i = 0; i < payload_data_sz; ++i) {
+            putchar(decoded_buf[n * fec_message_sz + i]);
+        }
+    }
+    putchar('\n');
+}
+
 void Bitstream::sector_scan(uint16_t sector_num)
 {
     printf("sector_scan(%d):\n", sector_num);
@@ -415,35 +436,106 @@ void Bitstream::sector_scan(uint16_t sector_num)
 
     uint32_t out;
     int c;
+    int prev_ctr = tacho_get_counter();
+    int retry_sector  = -1; // error sector number
+    int retry_att = 0;      // retry attempt
+    bool rewind_retry = false;
+
+    constexpr uint64_t pop_timeout_us = 100 * 1000; // pop timeout = 100ms
+    constexpr uint64_t timeout_us = 4000000; // 4s
+    constexpr uint32_t timeout_max = timeout_us / pop_timeout_us;
+    uint32_t timeout_ctr = 0;
+
+    wheel.play();
+
     for(int i = 0; i < 45*60*10; ++i) {
-        if (multicore_fifo_pop_timeout_us(100000ULL, &out)) {
+        if (multicore_fifo_pop_timeout_us(pop_timeout_us, &out)) {
+            timeout_ctr = 0;
             if (out == TS_TERMINATE) {
                 break;
             }
             else if ((out & 0xffff0000) == MSG_SECTOR_FOUND) {
                 uint16_t found_num = out & 0xffff;
-                printf("found: %d\n", found_num);
+                int ctr = tacho_get_counter();
+
+                info_println("found: %d (%d) ctr: %d sector_time: %d", 
+                        found_num, retry_sector, ctr, ctr - prev_ctr);
+
+                prev_ctr = ctr;
             }
             else if ((out & 0xffff0000) == MSG_SECTOR_READ_DONE) {
-                uint16_t found_num = out & 0xffff;
-                printf("read_done: %d\n", found_num);
-                //printf("raw:\n");
-                //for (int n = 0; n < 4; ++n) {
-                //    printf("chunk %d\n", n);
-                //    for (size_t i = 0; i < sector_buf.chunks[n].rawbuf.size(); ++i) {
-                //        printf("%02x ", sector_buf.chunks[n].rawbuf[i]);
-                //    }
-                //}
-                printf("decoded:\n");
-                for (int n = 0; n < 4; ++n) {
-                    for (size_t i = 0; i < payload_data_sz; ++i) {
-                        putchar(decoded_buf[n * fec_message_sz + i]);
-                        //printf("%02x ", decoded_buf[i]);
+                uint16_t sector_num = out & 0xffff;
+                if (retry_sector != -1) {
+                    if (sector_num < retry_sector) {
+                        // seeking sector, just skip and go on
+                    }
+                    else if (sector_num > retry_sector) {
+                        // this is strange, we skipped after sought sector?
+                        rewind_retry = true;    // try again
+                        ++retry_att;
+                        error_println("sector missing: %d found %d; retry %d",
+                                retry_sector, sector_num, retry_att);
+                    }
+                    else {
+                        // succesfully recovered the sector
+                        retry_sector = -1;
+                        retry_att = 0;
                     }
                 }
-                putchar('\n');
+
+                // if all is well, be happy abou tit
+                if (retry_sector == -1) {
+                    info_println("read_done: %d", sector_num);
+                    //dump_raw_sector_data();
+                    dump_decoded_sector_data();
+                }
+            }
+            else if ((out & 0xffff0000) == MSG_SECTOR_READ_ERROR) {
+                // ignore errors in sectors that are not the one being retried
+                uint16_t sector_num = out & 0xffff;
+                if (retry_sector == -1 || retry_sector >= sector_num) {
+                    rewind_retry = true;
+                    ++retry_att;
+                    if (retry_sector == -1) {
+                        retry_sector = sector_num;
+                    }
+                    error_println("crc error in sector: %d, retry %d", 
+                            retry_sector, retry_att);
+                }
+            }
+
+            if (rewind_retry) {  
+                rewind_retry = false;
+                // kill core1 reader to make sure it's not just reading noise
+                multicore_reset_core1();
+                multicore_fifo_drain();
+
+                wheel.rew(); 
+                // try to wind not too far away
+                for (int q = 0; q < 50; ++q) {
+                    if (tacho_get_counter() < prev_ctr - 10) {
+                        break;
+                    }
+                    sleep_ms(1);
+                }
+                wheel.play();
+
+                // relaunch core1 reader
+                multicore_launch_core1(core1_entry);
             }
         }
+        else {
+            ++timeout_ctr;
+            if (timeout_ctr >= timeout_max) {
+                warning_println("timeout, reset");
+
+                timeout_ctr = 0;
+                multicore_reset_core1();
+                multicore_fifo_drain();
+                multicore_launch_core1(core1_entry);
+            }
+        }
+
         c = getchar_timeout_us(0);
         if (c != PICO_ERROR_TIMEOUT) {
             break;
@@ -452,6 +544,8 @@ void Bitstream::sector_scan(uint16_t sector_num)
     if (c == 'd') {
         readloop_dump_debugbuf();
     }
+
+    wheel.stop();
 
     read_led(false);
     multicore_reset_core1();

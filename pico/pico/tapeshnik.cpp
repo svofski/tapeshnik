@@ -155,11 +155,7 @@ int main() {
                       break;
             case 10:
             case 13:
-                      printf("\nHelp: m=motor, p=play, f=ff, r=rew, space=stop, 0=zero counter\n");
-                      set_color(41, 37);
-                      printf("ERROR TEST");
-                      reset_color();
-                      putchar('\n');
+                      info_println("\nHelp: m=motor, p=play, f=ff, r=rew, space=stop, 0=zero counter");
                       break;
         }
 

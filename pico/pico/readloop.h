@@ -18,7 +18,8 @@ enum readloop_special_t
 };
 
 const int MSG_SECTOR_FOUND =      0x10000; // MSG_SECTOR_FOUND + sector no
-const int MSG_SECTOR_READ_DONE =  0x20000; // MSG_SECTOR_FOUND + sector no
+const int MSG_SECTOR_READ_DONE =  0x20000; // MSG_SECTOR_READ_DONE + sector no
+const int MSG_SECTOR_READ_ERROR = 0x30000; // MSG_SECTOR_READ_ERROR + sector no
 
 
 // reader callback: receives tracking state and 32 sampled bits, returns new state

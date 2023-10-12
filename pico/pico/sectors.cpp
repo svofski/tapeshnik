@@ -83,6 +83,8 @@ int SectorReader::correct_sector_data()
 {
     // decode all blocks in sector
 
+    int nerrors = 0;
+
     uint8_t * dst = decoded_buf;
     for (size_t n = 0; n < FEC_BLOCKS_PER_SECTOR; ++n) {
         ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, 
@@ -91,79 +93,21 @@ int SectorReader::correct_sector_data()
             /* msg */             dst);
         if (decoded_sz <= 0) {
             std::copy_n(rxbuf.chunks[n].rawbuf.begin(), payload_data_sz, dst);
-            printf("\n\n--- error ---\n");
+            //printf("\n\n--- error ---\n");
+            ++nerrors;
         }
-        uint16_t crc = calculate_crc(dst, payload_data_sz);
-        if (crc != rxbuf.chunks[n].p.payload.crc16) {
-            printf("\n\n--- crc error ---\n");
+        else {
+            uint16_t crc = calculate_crc(dst, payload_data_sz);
+            if (crc != rxbuf.chunks[n].p.payload.crc16) {
+                //printf("\n\n--- crc error ---\n");
+                ++nerrors;
+            }
         }
 
         dst += sizeof(chunk_payload_t);
     }
 
-
-
-#if 0
-    // entire rx_sector_buf layout as flat array
-    uint8_t * rx_ptr = reinterpret_cast<uint8_t *>(&rx_sector_buf);
-    ssize_t decoded_sz = correct_reed_solomon_decode(rs_rx, rx_fec_buf.begin(),
-            rx_fec_buf.size(), rx_ptr);
-    if (decoded_sz <= 0) {
-        std::copy_n(rx_fec_buf.begin(), sizeof(rx_sector_buf), rx_ptr);
-        if (enable_print_sector_info) {
-            printf("\n\n--- unrecoverable error in sector %d  ---\n", rx_sector_buf.sector_num);
-        }
-    }
-    if (rx_sector_buf.sector_num != rx_prev_sector_num + 1) {
-        if (enable_print_sector_info) {
-            printf("\n\n--- sector out of sequence; previous: %d current: %d\n\n", 
-                    rx_prev_sector_num, rx_sector_buf.sector_num);
-        }
-    }
-
-    uint16_t crc = calculate_crc(&rx_sector_buf.data[0], payload_data_sz);
-
-    multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE);
-
-    if (enable_print_sector_info) {
-        int nerrors = count_errors(&rx_fec_buf[0], rx_ptr, sizeof(rx_sector_buf));
-        float ber = 100.0 * nerrors / sizeof(rx_sector_buf);
-        if (crc != rx_sector_buf.crc16) {
-            ber = 100;
-        }
-
-        std::string filename(reinterpret_cast<const char *>(&rx_sector_buf.file_id[0]), file_id_sz);
-        set_color(40, 33); // 40 = black bg, 33 = brown fg
-        printf("\nsector %d; file: '%s' crc actual: %04x expected: %04x nerrors=%d BER=%3.1f ", 
-                rx_sector_buf.sector_num,
-                filename.c_str(),
-                crc, rx_sector_buf.crc16,
-                nerrors, ber);
-        if (crc == rx_sector_buf.crc16) {
-            printf("OK");
-        }
-        else {
-            set_color(41, 37);
-            printf("ERROR");
-        }
-        reset_color();
-        putchar('\n');
-    }
-
-    if (enable_print_sector_text) {
-        for (size_t i = 0; i < payload_data_sz; ++i) {
-            putchar(rx_sector_buf.data[i]);
-        }
-    }
-
-    rx_prev_sector_num = rx_sector_buf.sector_num;
-
-    if (rx_sector_buf.reserved0 & SECTOR_FLAG_EOF) {
-        print_color(45, 33, "EOF", "\n");
-        return -1;
-    }
-#endif
-    return 0;
+    return nerrors;
 }
 
 // Boyer-Moore majority vote
@@ -271,14 +215,14 @@ SectorReader::readloop_callback(readloop_state_t state, uint32_t bits)
 #if LOOPBACK_TEST
                     fuckup_sector_data();
 #endif
-                    int res = correct_sector_data();
-                    multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE + sector_number);
-                    if (res == -1) {
-                        return TS_TERMINATE;
+                    int nerrors = correct_sector_data();
+                    if (nerrors == 0) {
+                        multicore_fifo_push_blocking(MSG_SECTOR_READ_DONE + sector_number);
                     }
                     else {
-                        return TS_RESYNC_SECTOR;  // seek next sector
+                        multicore_fifo_push_blocking(MSG_SECTOR_READ_ERROR + sector_number);
                     }
+                    return TS_RESYNC_SECTOR;  // seek next sector
                 }
             }
             break;

@@ -60,7 +60,7 @@ uint32_t readloop_delaylocked(readloop_callback_t cb, void * user)
     int rawcnt = 0;   // raw sample count for debugbuffa
     uint32_t rawsample = 0;
 
-    printf("%s, collecting debugbuf\n", __FUNCTION__);
+    //printf("%s, collecting debugbuf\n", __FUNCTION__);
     readloop_state_t state = TS_RESYNC_SECTOR;
 
     for (; state != TS_TERMINATE;) {

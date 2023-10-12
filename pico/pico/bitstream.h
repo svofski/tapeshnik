@@ -31,6 +31,9 @@ private:
     // write the inner part of a sector: LEADER, DATA SYNC, DATA + PARITY
     void write_sector_data(SectorWriter & writer, const uint8_t * data, size_t data_sz);
 
+    void dump_raw_sector_data();
+    void dump_decoded_sector_data();
+
 public:
     Bitstream(Wheel & wheel, int gpio_rdhead, int gpio_wrhead, int gpio_wren,
             int gpio_read_led, int gpio_write_led)

@@ -89,11 +89,11 @@ int Wheel::stop()
     this->tape_error = ERR_OK;
 
     autostop_alarm_stop();
-    tacho_set_dir(0);
     
     if (debounce_get(this->i_mode_entry) != 0) {
         this->wheel_position = WP_STOP;
         motor.stop_later();
+        tacho_set_dir(0);
         return ERR_OK;
     }
 
@@ -110,6 +110,7 @@ int Wheel::stop()
 
     if (debounce_get(this->i_mode_entry) != 0) {
         wheel_position = WP_STOP;
+        tacho_set_dir(0);
         return ERR_OK;
     }
     //
@@ -131,7 +132,8 @@ int Wheel::stop()
         sleep_ms(25);
         wheel_position = WP_STOP;
     }
-    
+    tacho_set_dir(0);
+
     return tape_error;
 }
 
@@ -161,6 +163,7 @@ int Wheel::play()
     this->wheel_position = WP_PLAY;
 
     autostop_alarm_start(AUTOSTOP_SLOW);
+    //tacho_set_dir(+1);
 
     return ERR_OK;
 }
@@ -201,12 +204,15 @@ int Wheel::rew()
     this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
     sleep_ms(50);
     this->solenoid.pulse_ms(SOLENOID_PULSE_MS);
-    sleep_ms(100);
-    tacho_set_dir(-1);
-    sleep_ms(200);
+    sleep_ms(122);
+    tacho_set_dir(-1); // start counting backwards precisely at this moment
+
+    // it seems that it should be ~178 here, but for quick short rewinds
+    // like during retries it winds back too much, so decrease the delay to 50
+    //sleep_ms(178);
+    sleep_ms(50);
     this->wheel_position = WP_REW;
     
-    //sleep_ms(200);
     autostop_alarm_start(AUTOSTOP_QUICK);
 
     return ERR_OK;

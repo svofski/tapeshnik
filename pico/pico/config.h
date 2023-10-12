@@ -65,4 +65,5 @@ constexpr uint32_t SYNC_DATA    = 0xCCCCCCE3;
 
 #define SECTOR_NUM_REPEATS  4
 
+// number of subblocks in sector
 constexpr uint32_t FEC_BLOCKS_PER_SECTOR = 4;
