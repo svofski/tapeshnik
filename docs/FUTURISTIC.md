@@ -50,4 +50,23 @@ The sensor to be tested is [PMW3389DM-T3QU](futuristic/pixart_pmw3389dm-t3qu_-_p
 
 ![otherworldly beauty](futuristic/ecma-34-cassette-dimensions.jpg)
 
+### Update 08-DEC-2025
+
+Here's a couple of pictures of the current state of the project:
+
+![mecha2025-1](futuristic/mecha2025-1.jpg)
+
+Motors spinning
+
+![mecha2025-2](futuristic/mecha2025-2.gif)
+
+Both motors are controlled by RP2040-Zero for now, using SimpleFOC Arduino library using Philearlehower core. Only the basic control is implemented, something like PLAY/FF/REW/STOP. No tape travel speed estimation is done and the optical sensor is not yet used. 
+
+![mecha2025-3-magnets](futuristic/mecha2025-3-magnets.jpg)
+
+My motors didn't have the encoder mounted and it turns out you can't just stick a magnet onto a hollow shaft and hope that it stays put. The shaft also has a rather weird 3.8mm inner diameter. I was able to find a couple of screws that stick in there reasonably well, but a more repeatable solution is needed.
+
+![mecha2025-3-magnets](futuristic/mecha2025-4-opto.jpg)
+
+The optical chip is obviously Vorlon technology. This module was finicky to assemble.  Also I didn't make the solder pads from the other side of the platen so the space for soldering the PCB at the right angle was very tight. I think it ended up being offset from the centre of the tape a bit too much. We'll see if this sensor can see the tape at all.
 
