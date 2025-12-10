@@ -68,5 +68,4 @@ My motors didn't have the encoder mounted and it turns out you can't just stick 
 
 ![mecha2025-3-magnets](futuristic/mecha2025-4-opto.jpg)
 
-The optical chip is obviously Vorlon technology. This module was finicky to assemble.  Also I didn't make the solder pads from the other side of the platen so the space for soldering the PCB at the right angle was very tight. I think it ended up being offset from the centre of the tape a bit too much. We'll see if this sensor can see the tape at all.
-
+The optical chip PWM3389 is made using Vorlon technology. It seems to be tracking tape, time will tell how reliable it is.
