@@ -69,3 +69,5 @@ My motors didn't have the encoder mounted and it turns out you can't just stick 
 ![mecha2025-3-magnets](futuristic/mecha2025-4-opto.jpg)
 
 The optical chip PWM3389 is made using Vorlon technology. It seems to be tracking tape, time will tell how reliable it is.
+
+Update: time did tell. The mouse sensor is not useful for tape tracking. SQUAL parameter can be used to detect tape leader, but the speed reading is highly variable and unpredictable. Update video link: [Tapeshnik Pt.6](https://www.youtube.com/watch?v=3gg_O02B6kA)
