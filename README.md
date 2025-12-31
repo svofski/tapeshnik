@@ -18,4 +18,6 @@ Eventually it's doomed to become either a dust gatherer/conversation piece or an
 
 There is no blog, but there are project notes, updated sometimes: [NOTES](docs/NOTES.md)
 
+Note on the second iteration of Tapeshnik: [FUTURISTIC](docs/FUTURISTIC.md)
+
 There is also a [youtube playlist](https://www.youtube.com/playlist?list=PLuOXWyWDhULNxkAvCRtwkEgnuxFfULnF9), where I try to show noteworthy things about this project. Like/subscribe!
