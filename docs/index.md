@@ -20,6 +20,7 @@ Some old data drives used to have no capstan, for example:
 
  * [Digital TU56 Dectape](https://gunkies.org/wiki/TU60_DECasetteTape_Transport)
  * [Digital TU60 DECassette](https://gunkies.org/wiki/TU60_DECasetteTape_Transport)
+   * [Detailed description, principle of operation, data format of TU60](https://bitsavers.org/pdf/dec/decCassette/DEC-00-HTU60-C-D_TU60maint_Oct73.pdf)
  * Coleco Adam Digital Data Pack
  * [D/CAS drives](https://en.wikipedia.org/wiki/D/CAS)
  
