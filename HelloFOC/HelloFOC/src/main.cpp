@@ -1,11 +1,12 @@
 #include <Arduino.h>
 #include <SimpleFOC.h>
+#include <encoders/smoothing/SmoothingSensor.h>
 #include "PMW3360/PMW3360.h"
 #include "deckcontrol.h"
 #include "util.h"
 
-#define WITH_MOTORS
-#define WITH_DECK_CONTROLS
+#define WITH_MOTORS 1
+#define WITH_DECK_CONTROLS 1
 
 void doPlayForward(char *cmd);
 void doFastForward(char *cmd);
@@ -56,12 +57,14 @@ int tape_sensor_squal = 0;
 // MOTOR1 (supply spindle)
 BLDCMotor motor1 = BLDCMotor(/*pp=*/7, /*R=*/11.3, /*KV=*/ 196); 
 BLDCDriver3PWM driver1 = BLDCDriver3PWM(3, 4, 5); // PWM1_U/V/W, no enable
-MagneticSensorSPI sensor1 = MagneticSensorSPI(AS5047_SPI, PIN_MOTOR1_SENSOR_CS_N);
+MagneticSensorSPI magneticSensor1 = MagneticSensorSPI(AS5047_SPI, PIN_MOTOR1_SENSOR_CS_N);
+SmoothingSensor smoothingSensor1 = SmoothingSensor(magneticSensor1, motor1);
 
 // MOTOR2 (takeup spindle)
 BLDCMotor motor2 = BLDCMotor(/*pp=*/7, /*R=*/11.3, /*KV=*/ 196); 
 BLDCDriver3PWM driver2 = BLDCDriver3PWM(0, 1, 2); // PWM1_U/V/W, no enable
-MagneticSensorSPI sensor2 = MagneticSensorSPI(AS5047_SPI, PIN_MOTOR2_SENSOR_CS_N);
+MagneticSensorSPI magneticSensor2 = MagneticSensorSPI(AS5047_SPI, PIN_MOTOR2_SENSOR_CS_N);
+SmoothingSensor smoothingSensor2 = SmoothingSensor(magneticSensor2, motor2);
 
 // somehow changing SPI (SPI0) parameters seems to kill everything, not sure what's going on
 //                        rx, cs,    sck,tx
@@ -92,14 +95,27 @@ DeckControl deckControl(&motor1, &motor2, &head_lift_servo);
 
 void pidSetup(BLDCMotor& motor)
 {
-  motor.motion_downsample = 0;
 
+  #if 1 
   // velocity loop PID
-  motor.PID_velocity.P = 0.08;
+  motor.PID_velocity.P = 0.1;
   motor.PID_velocity.I = 1;//0.025; // maybe 1 is too heavy?
   motor.PID_velocity.D = 0.0;
-  motor.PID_velocity.output_ramp = 1000.0;
+  motor.PID_velocity.output_ramp = 8000.0;
   motor.PID_velocity.limit = 2.0;//20.0;
+
+//  // Low pass filtering time constant
+  motor.LPF_velocity.Tf = 0.01f;    // larger value -> bigger start/stop jerk
+  #endif
+  #if 0
+  motor.PID_velocity.P = 0.2;
+  motor.PID_velocity.I = 0.025;
+  motor.PID_velocity.D = 0.0;
+  motor.PID_velocity.output_ramp = 50.0;
+  motor.PID_velocity.limit = 1.0;
+
+  motor.LPF_velocity.Tf = 0.3f;    // larger value -> bigger start/stop jerk
+  #endif
 
   // angle loop PID
   motor.P_angle.P = 30.0;
@@ -108,27 +124,33 @@ void pidSetup(BLDCMotor& motor)
   motor.P_angle.output_ramp = 100.0;
   motor.P_angle.limit = 20.0;
 
-//  // Low pass filtering time constant
-  motor.LPF_velocity.Tf = 0.03f;    // larger value -> bigger start/stop jerk
   // pwm modulation settings
-  motor.foc_modulation = FOCModulationType::SinePWM;
-  motor.modulation_centered = 1.0;
+  motor.foc_modulation = FOCModulationType::SpaceVectorPWM;
+  motor.modulation_centered = 1.0f;
 
   // with sx1308 there seems to be not enough power
-  // the motors tend to go brrrrr if stopped abruptly, such as when reaching EOT
-  // limiting the voltage helps this: 3 is fine but boring, 4 rather good, 6 motor goes brrr
-  motor.voltage_limit = 4;    
+  // 4.0 is the max safe value, 4.2 is mostly ok but no
+  // 
+  //motor.voltage_limit = 4.0f;
+
+  // for external 9V
+  motor.voltage_limit = 6.0f;
 }
 
-void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, MagneticSensorSPI &sensor, uint8_t pin_standby)
+void sensorInit(MagneticSensorSPI &sensor)
 {
-  // initialise magnetic sensor hardware
   sensor.clock_speed = 10'000'000;
   sensor.init(&SPIn);
+}
+
+void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, Sensor &sensor, uint8_t pin_standby)
+{
+  // initialise magnetic sensor hardware
   motor.linkSensor(&sensor);
   
   // driver config
   driver.voltage_power_supply = 9; // Replace with your power supply voltage
+  driver.pwm_frequency = 24000; // default 24000
   driver.init();
   motor.linkDriver(&driver);
   motor.voltage_sensor_align = 2;
@@ -137,8 +159,9 @@ void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, MagneticSensorSPI &sens
   //motor.controller = MotionControlType::torque;
   //motor.target = 0.2; // Volts 
 
-  motor.controller = MotionControlType::velocity;
-  motor.target = 6.28; // radians/sec 
+  //motor.controller = MotionControlType::velocity;
+  motor.controller = MotionControlType::torque;
+  motor.target = 0; // radians/sec 
 
   pidSetup(motor);
 
@@ -153,6 +176,8 @@ void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, MagneticSensorSPI &sens
     fail = "motor init failed!";
     return;
   }
+
+  motor.motion_downsample = 3;
   
   // initFOC needs motor to actually work
   // enable motori
@@ -166,6 +191,8 @@ void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, MagneticSensorSPI &sens
     fail = "FOC init failed!";
     return;
   }
+
+  Serial.printf("monitorInit: motion_downsample=%d\n", motor.motion_downsample);
 } 
 
 void sensor_dumbtest(MagneticSensorSPI &sensor1, MagneticSensorSPI &sensor2)
@@ -241,14 +268,15 @@ void setup() {
   head_lift_servo.attach(HEAD_LIFT_SERVO_PIN);
   head_lift_servo.write(HEAD_LIFT_SERVO_UP);
 
-#ifdef WITH_MOTORS
+#if WITH_MOTORS
   //_delay(2000);
   //_delay(250);
   SimpleFOCDebug::enable(&Serial);
   Serial.println("simpleFOC setup begins");
 
-  motor1.useMonitoring(Serial); 
-  motorInit(motor1, driver1, sensor1, PIN_STANDBY);
+  //motor1.useMonitoring(Serial); 
+  sensorInit(magneticSensor1);
+  motorInit(motor1, driver1, smoothingSensor1, PIN_STANDBY);
 
   // pull the slack on supply reel after initialisation
   motor1.controller = MotionControlType::torque;
@@ -259,7 +287,8 @@ void setup() {
   }
 
   //motor2.useMonitoring(Serial); 
-  motorInit(motor2, driver2, sensor2, PIN_STANDBY);
+  sensorInit(magneticSensor2);
+  motorInit(motor2, driver2, smoothingSensor2, PIN_STANDBY);
 
   motor1.target = 0;
   motor2.target = 0;
@@ -271,7 +300,7 @@ void setup() {
   command.add('M', doMotor1, "Motor 1");
   command.add('N', doMotor2, "Motor 2");
 
-#ifdef WITH_DECK_CONTROLS
+#if WITH_DECK_CONTROLS
   command.add('f', doPlayForward, "PLAY.F");
   command.add('F', doFastForward, "FAST.F");
   command.add('r', doPlayReverse, "PLAY.R");
@@ -506,7 +535,7 @@ unsigned long last_poll_us = 0;
 
 
 void loop() {
-#ifdef WITH_MOTORS
+#if WITH_MOTORS
   motorLoop(motor1);
   motorLoop(motor2);
 
@@ -514,7 +543,7 @@ void loop() {
   command.run();
 
 #endif
-#ifdef WITH_DECK_CONTROLS
+#if WITH_DECK_CONTROLS
   //control_fsm();
   tape_sensor_poll();
   deckControl.loop();

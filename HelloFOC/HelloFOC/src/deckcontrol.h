@@ -1,5 +1,7 @@
 #pragma once
 
+#define USE_VELOCITY_CONTROL 1
+
 #include <Arduino.h>
 #include <SimpleFOC.h>
 #include <Servo.h>
@@ -27,6 +29,7 @@ enum class DeckState {
     STOP_RAMPDOWN, // slowing down
     STOP_TENSION,
     PLAY,
+    PLAY_RAMPUP, // speeding up
 };
 
 enum class SetSpeedOption {
@@ -75,8 +78,15 @@ public:
     static constexpr uint32_t W_INTERVAL_US = 1'000'000 / 8; // measure 8 times per second
     static constexpr float W_SCALE = 8.0f;  // scale to rad/s
 
+    #if USE_VELOCITY_CONTROL
     static constexpr float TORQUE_SUPPLY = 0.03f;
+    #else
+    static constexpr float TORQUE_SUPPLY = 0.03f;
+    #endif
     static constexpr float TORQUE_BRAKE = 0.08f;
+
+    static constexpr float TORQUE_TAKEUP_NORMAL = 0.2f;
+    static constexpr float TORQUE_TAKEUP_FAST = 0.3f;
 
     static constexpr float NORMAL_SPEED = 47.7e-3f;
     static constexpr float FF_SPEED = 30 * 47.7e-3f;
@@ -86,7 +96,7 @@ public:
     float tape_thickness = 13e-6; // 13um
 
     int print_update_ctr = 0;
-    static constexpr int PRINT_UPDATE_INTERVAL = 8; // skip 8 measurements between printing debug info
+    static constexpr int PRINT_UPDATE_INTERVAL = 128; // skip 8 measurements between printing debug info
 
     DeckState state = DeckState::STOP;
     DeckDirection direction;
@@ -102,8 +112,8 @@ public:
 
     // servo positions in microseconds
     static constexpr int HEAD_SERVO_UP_POS = 1750;
-    static constexpr int HEAD_SERVO_MID_POS = 1400;
-    static constexpr int HEAD_SERVO_DOWN_POS = 1000;
+    static constexpr int HEAD_SERVO_MID_POS = 1600;
+    static constexpr int HEAD_SERVO_DOWN_POS = 1400;
 
     float tape_counter;
     int optical_counter;
@@ -167,7 +177,11 @@ public:
                 }
                 if (direction == DeckDirection::FORWARD) {
                     lift_head(HeadPosition::DOWN);
+                    #if USE_VELOCITY_CONTROL
                     set_speed(NORMAL_SPEED);
+                    #else
+                    set_speed(TORQUE_TAKEUP_NORMAL);
+                    #endif
                 }
                 else {
                     stop(DeckButton::PLAY_FORWARD); // full stop, then try again
@@ -179,7 +193,11 @@ public:
                 }
                 if (direction == DeckDirection::REVERSE) {
                     lift_head(HeadPosition::DOWN);
+                    #if USE_VELOCITY_CONTROL
                     set_speed(NORMAL_SPEED);
+                    #else
+                    set_speed(TORQUE_TAKEUP_NORMAL);
+                    #endif
                 }
                 else {
                     stop(DeckButton::PLAY_REVERSE); // full stop, then try again
@@ -191,7 +209,11 @@ public:
                 }
                 if (direction == DeckDirection::FORWARD) {
                     lift_head(HeadPosition::UP);
+                    #if USE_VELOCITY_CONTROL
                     set_speed(FF_SPEED);
+                    #else
+                    set_speed(TORQUE_TAKEUP_FAST);
+                    #endif
                 }
                 else {
                     stop(DeckButton::FAST_FORWARD); // full stop, then try again
@@ -203,7 +225,11 @@ public:
                 }
                 if (direction == DeckDirection::REVERSE) {
                     lift_head(HeadPosition::UP);
+                    #if USE_VELOCITY_CONTROL
                     set_speed(FF_SPEED);
+                    #else
+                    set_speed(TORQUE_TAKEUP_FAST);
+                    #endif
                 }
                 else {
                     stop(DeckButton::FAST_REVERSE); // full stop, then try again
@@ -253,10 +279,16 @@ public:
         tape_speed_sp = speed;
 
         if (tape_speed_sp != 0) {
+#if USE_VELOCITY_CONTROL
             takeup->motor->controller = MotionControlType::velocity;
+#else
+            Serial.printf("set_speed, takeup torque control: ");
+            takeup->motor->controller = MotionControlType::torque;
+            set_torque(takeup, tape_speed_sp);
+#endif
             set_torque(supply, TORQUE_SUPPLY);
             autostop_count = 0;
-            enter_state(DeckState::PLAY, "set_speed > 0");
+            enter_state(DeckState::PLAY_RAMPUP, "set_speed > 0");
         }
         else {
             // don't force STOP_TENSION before the speed is dropped
@@ -303,6 +335,11 @@ public:
                     Serial.printf("enter_state: next_action scheduled -> press_button(%d)\n", (int)btn);
                     press_button(btn);
                 }
+                break;
+            case DeckState::PLAY_RAMPUP:
+                Serial.printf("enter_state: %d -> %d (PLAY_RAMPUP, %s)\n", (int)state, (int)next_state, why);
+                state = next_state;
+                optical_holdoff_us = micros() + 1'000'000U; // don't slow down based on squal
                 break;
             case DeckState::PLAY:
                 Serial.printf("enter_state: %d -> %d (PLAY, %s)\n", (int)state, (int)next_state, why);
@@ -379,8 +416,8 @@ public:
             tape_velocity = takeup->w * r2;
             tape_counter += delta_travel;
 
-            if (state == DeckState::PLAY) {
-                check_autostop();
+            if (state == DeckState::PLAY || state == DeckState::PLAY_RAMPUP) {
+                //##check_autostop();
             }
 
             supply->w_average = supply->w_average * 0.8 + supply->w * 0.2;
@@ -405,14 +442,13 @@ public:
         static const char *LOCKED = "hubs locked";
         static const char *FREESPIN = "hubs spin in opposite directions";
 
-        if (state == DeckState::PLAY) {
+        if (state == DeckState::PLAY || state == DeckState::PLAY_RAMPUP) {
             // autostop situation: both spindles stopped
             if (fabs(supply->w) < MIN_W || fabs(takeup->w) < MIN_W) {
                 // update calibration
-                calibrate();
+                // calibrate(); -- very bad idea in practice because autostop can happen at any time and it ruins everything
                 ++autostop_count;
                 why = LOCKED;
-
             }
             //else if (fsgn(supply->w) != fsgn(takeup->w)) {
             //    ++autostop_count;
@@ -458,7 +494,7 @@ public:
             float limit = VELOCITY_RAMP_LIMIT;
 
             // slowing down when going stupid fast, need harder braking
-            if (state == DeckState::PLAY) {
+            if (state == DeckState::PLAY || state == DeckState::PLAY_RAMPUP) {
                 if (fabs(required_w) < fabs(current_w) && fabs(step) > limit) {
                     set_torque(supply, TORQUE_BRAKE);
                 }
@@ -472,8 +508,25 @@ public:
             //Serial.printf("## sp=%f required_w=%f current_w=%f\n", tape_speed_sp, required_w, current_w);
 
             // TODO: break up state STOPPING (ramp down to 0 and TENSIONING (torque up before STOP)
-            if (takeup->motor->controller == MotionControlType::velocity) {
-                takeup->motor->target = current_w;
+            // experiment 1: avoid speed modulation after ramping up
+            if (state == DeckState::PLAY_RAMPUP || state == DeckState::STOP_RAMPDOWN) {
+                if (takeup->motor->controller == MotionControlType::torque) {
+                    if (state == DeckState::PLAY_RAMPUP) {
+                        enter_state(DeckState::PLAY, "torque mode, RAMPUP->PLAY");
+                    }
+                    else if (state == DeckState::STOP_RAMPDOWN) {
+                        enter_state(DeckState::STOP, "torque mode, RAMPDOWN->STOP");
+                    }
+                }
+                if (fabs(current_w - required_w) < 0.001f) {
+                    current_w = required_w;
+                    if (state == DeckState::PLAY_RAMPUP) {
+                        enter_state(DeckState::PLAY, "reached required speed");
+                    }
+                }
+                if (takeup->motor->controller == MotionControlType::velocity) {
+                    takeup->motor->target = current_w;
+                }
             }
 
             //Serial.printf("target=%f diff=%f state=%d cycles=%d\n", 
@@ -523,9 +576,8 @@ public:
             }
         }
 
-        if (state == DeckState::PLAY && fabs(tape_speed_sp) > NORMAL_SPEED) {
+        if ((state == DeckState::PLAY || state == DeckState::PLAY_RAMPUP) && fabs(tape_speed_sp) > NORMAL_SPEED) {
             if (optical_squal_prev < 80 && optical_squal > 80) {
-                //set_speed(NORMAL_SPEED);
                 set_speed(0, SetSpeedOption::AUTOSTOP);
                 Serial.println("SQUAL AUTOSTOP");
             }
