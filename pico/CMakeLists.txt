@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.5)
 
 # Pull in SDK (must be before project)
 include(pico_sdk_import.cmake)
@@ -33,3 +33,4 @@ add_subdirectory(../libcorrect libcorrect)
 # main program
 add_subdirectory(pico)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Generate compile_commands.json file" FORCE)
