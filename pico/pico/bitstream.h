@@ -22,6 +22,7 @@ private:
     bool initialized;
     uint offset_tx, offset_rx;
 
+public:
     // switch to write mode
     void write_enable(bool enable);
     void read_led(bool on);

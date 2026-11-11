@@ -229,7 +229,6 @@ void Bitstream::write_sector_data(SectorWriter& writer, const uint8_t * data,
 
 void Bitstream::llformat()
 {
-
     init();
     pio_sm_set_enabled(pio, sm_tx, true);
 

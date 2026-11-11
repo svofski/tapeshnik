@@ -20,7 +20,8 @@
 
 #define MOD_HALFPERIOD  8     // number of clocks per half-period in modulation
                               // also hardcoded in bitstream.pio !
-#define MOD_FREQ        7000  // max bit flipping frequency
+#define MOD_FREQ  2000 // take it easy
+//#define MOD_FREQ        7000  // max bit flipping frequency
                               // mfm: 9600 almost works but has trouble syncing
                               //      3300 is rock solid
                               //      6600 seems solid

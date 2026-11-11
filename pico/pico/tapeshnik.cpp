@@ -60,6 +60,9 @@ void freq_sweep()
 
 void freq_8(int hz)
 {
+    bstream.init();
+    bstream.write_enable(true);
+
     gpio_set_function(GPIO_WRHEAD, GPIO_FUNC_PWM);
     auto slice_num = pwm_gpio_to_slice_num(GPIO_WRHEAD);   // GP16, pin 21
     pwm_set_clkdiv_int_frac(slice_num, 62, 8);   // pwm slice frequency 125MHz/62.5 = 2MHz
@@ -67,14 +70,26 @@ void freq_8(int hz)
     // wrap = [2e6/100..2e6/20000] = [20000..100]
     pwm_set_enabled(slice_num, true);
     
-    printf("20sec of %d Hz... on pin 21 ", hz);
+    printf("%d Hz... on pin 21, any key to abort ", hz);
     int div = static_cast<int>(125000000/62.5/hz);
     pwm_set_wrap(slice_num, div);
     pwm_set_chan_level(slice_num, PWM_CHAN_A, div >> 1);
+
+    // wait until key press
+    for (;;) {
+        int c = getchar_timeout_us(1000); 
+        if (c != PICO_ERROR_TIMEOUT) {
+            printf("aborted\n");
+            break;
+        }
+    }
+
     //sleep_ms(20000);
-    //pwm_set_enabled(slice_num, false);
-    //gpio_set_function(GPIO_WRHEAD, GPIO_FUNC_NULL);
-    //printf("done\n");
+    pwm_set_enabled(slice_num, false);
+    gpio_set_function(GPIO_WRHEAD, GPIO_FUNC_NULL);
+    printf("done\n");
+
+    bstream.write_enable(false);
 }
 
 void freq_stop()
@@ -129,11 +144,11 @@ int main() {
                       break;
             case 's': freq_sweep();
                       break;
+            case '1': freq_8(1000);
+                      break;
             case '4': freq_8(4000);
                       break;
             case '8': freq_8(8000);
-                      break;
-            case '1': freq_8(10000);
                       break;
             case '2': freq_8(20000);
                       break;
@@ -155,7 +170,9 @@ int main() {
                       break;
             case 10:
             case 13:
-                      info_println("\nHelp: m=motor, p=play, f=ff, r=rew, space=stop, 0=zero counter");
+                      info_println("\nHelp: m=motor, p=play, f=ff, r=rew, space=stop, 0=zero counter\n"
+                              "z: solenoid pulse, s: freq_sweep, 1: 1000, 4: 4000, 8: 8000, 2: 20000, 3: 30000\n"
+                              "F: llformat, l: sector_scan, w: test_write\n");
                       break;
         }
 
