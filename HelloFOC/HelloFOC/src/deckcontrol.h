@@ -79,7 +79,7 @@ public:
     static constexpr float W_SCALE = 8.0f;  // scale to rad/s
 
     #if USE_VELOCITY_CONTROL
-    static constexpr float TORQUE_SUPPLY = 0.03f;
+    static constexpr float TORQUE_SUPPLY = 0.0f;//0.4f;
     #else
     static constexpr float TORQUE_SUPPLY = 0.03f;
     #endif
@@ -526,6 +526,7 @@ public:
                 }
                 if (takeup->motor->controller == MotionControlType::velocity) {
                     takeup->motor->target = current_w;
+                    Serial.printf("### 529: current_w=%d", (int)(current_w * 1000));
                 }
             }
 

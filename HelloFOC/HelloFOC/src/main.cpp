@@ -4,6 +4,7 @@
 #include "PMW3360/PMW3360.h"
 #include "deckcontrol.h"
 #include "util.h"
+#include <hardware/pwm.h>
 
 #define WITH_MOTORS 1
 #define WITH_DECK_CONTROLS 1
@@ -98,14 +99,14 @@ void pidSetup(BLDCMotor& motor)
 
   #if 1 
   // velocity loop PID
-  motor.PID_velocity.P = 0.1;
-  motor.PID_velocity.I = 1;//0.025; // maybe 1 is too heavy?
-  motor.PID_velocity.D = 0.0;
-  motor.PID_velocity.output_ramp = 8000.0;
-  motor.PID_velocity.limit = 2.0;//20.0;
+  motor.PID_velocity.P = 0.4;
+  motor.PID_velocity.I = 8;
+  motor.PID_velocity.D = 0.0011;
+  motor.PID_velocity.output_ramp = 300.0;
+  motor.PID_velocity.limit = 7.0;
 
 //  // Low pass filtering time constant
-  motor.LPF_velocity.Tf = 0.01f;    // larger value -> bigger start/stop jerk
+  motor.LPF_velocity.Tf = 0.02f;    // larger value -> bigger start/stop jerk
   #endif
   #if 0
   motor.PID_velocity.P = 0.2;
@@ -117,7 +118,7 @@ void pidSetup(BLDCMotor& motor)
   motor.LPF_velocity.Tf = 0.3f;    // larger value -> bigger start/stop jerk
   #endif
 
-  // angle loop PID
+  // angle loop PID (only for torque mode)
   motor.P_angle.P = 30.0;
   motor.P_angle.I = 0.0;
   motor.P_angle.D = 5.0;
@@ -134,13 +135,29 @@ void pidSetup(BLDCMotor& motor)
   //motor.voltage_limit = 4.0f;
 
   // for external 9V
-  motor.voltage_limit = 6.0f;
+  motor.voltage_limit = 7.0f;
 }
 
 void sensorInit(MagneticSensorSPI &sensor)
 {
   sensor.clock_speed = 10'000'000;
   sensor.init(&SPIn);
+}
+
+void sync_pwm_slices() {
+  // Bitmask for Slices 0, 1, and 2: (1 << 0) | (1 << 1) | (1 << 2) = 0x07
+  uint32_t slice_mask = (1u << 0) | (1u << 1) | (1u << 2);
+
+  // 1. Pause Slices 0, 1, and 2 simultaneously
+  pwm_set_mask_enabled(0); // Or read current enabled mask first if using other PWM slices
+
+  // 2. Reset all three slice counters to 0 while paused
+  pwm_set_counter(0, 0);
+  pwm_set_counter(1, 0);
+  pwm_set_counter(2, 0);
+
+  // 3. Re-enable Slices 0, 1, and 2 on the exact same clock cycle
+  pwm_set_mask_enabled(slice_mask);
 }
 
 void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, Sensor &sensor, uint8_t pin_standby)
@@ -152,6 +169,7 @@ void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, Sensor &sensor, uint8_t
   driver.voltage_power_supply = 9; // Replace with your power supply voltage
   driver.pwm_frequency = 24000; // default 24000
   driver.init();
+  sync_pwm_slices();
   motor.linkDriver(&driver);
   motor.voltage_sensor_align = 2;
 
@@ -255,7 +273,6 @@ void tape_sensor_poll()
   }
 }
 
-
 void setup() {
   //_delay(1000);
   Serial.begin(115200);
@@ -276,19 +293,27 @@ void setup() {
 
   //motor1.useMonitoring(Serial); 
   sensorInit(magneticSensor1);
+  sensorInit(magneticSensor2);
+
+#define SWAP_MOTORS 0
+
+#if SWAP_MOTORS
+  motorInit(motor1, driver2, smoothingSensor2, PIN_STANDBY);
+  motorInit(motor2, driver1, smoothingSensor1, PIN_STANDBY);
+#else
   motorInit(motor1, driver1, smoothingSensor1, PIN_STANDBY);
 
   // pull the slack on supply reel after initialisation
-  motor1.controller = MotionControlType::torque;
-  motor1.target = 0.02; // Volts 
-  for (int i = 0; i < 50; ++i) {
-    motorLoop(motor1);
-    _delay(1);
-  }
+  //motor1.controller = MotionControlType::torque;
+  //motor1.target = 0.02; // Volts 
+  //for (int i = 0; i < 50; ++i) {
+  //  motorLoop(motor1);
+  //  _delay(1);
+  //}
 
   //motor2.useMonitoring(Serial); 
-  sensorInit(magneticSensor2);
   motorInit(motor2, driver2, smoothingSensor2, PIN_STANDBY);
+#endif
 
   motor1.target = 0;
   motor2.target = 0;
@@ -318,6 +343,9 @@ void setup() {
   _delay(1000);
   Serial.println("Initialising PMW3360");
   tape_sensor_setup();
+
+  motor1.controller = MotionControlType::velocity;
+  //motor1.target = 6.28f * 0.5f;
 }
 
 enum state { 
@@ -342,167 +370,6 @@ int tape_state = S_DEFAULT;
 int tape_state_req = S_DEFAULT;
 int tape_state_next = -1;
 unsigned long tape_state_timer = 0;
-
-BLDCMotor *stopmotor1, *stopmotor2;
-
-void control_fsm()
-{
-  switch (tape_state) {
-    case S_DEFAULT:
-    case S_PLAY:
-    case S_FF:
-    case S_REW:
-      if (tape_state_req == S_STOP) {
-        if (tape_state != S_DEFAULT && !(tape_state >= S_STOP1 && tape_state <= S_STOP3)) {
-          if (motor2.controller == MotionControlType::velocity) {
-            stopmotor1 = &motor1;
-            stopmotor2 = &motor2;
-          }
-          else {
-            stopmotor1 = &motor2;
-            stopmotor2 = &motor1;
-          }
-          tape_state = S_STOP1;
-        }
-      }
-      else if (tape_state_req == S_PLAY) {
-        if (tape_state == S_FF) {
-          Serial.println("quick FF->PLAY_FF1");
-          tape_state = S_PLAY_FF1; // no need to apply pretension from FF
-        }
-        else if (!(tape_state >= S_PLAY1 && tape_state <= S_PLAY2)) {
-          tape_state = S_PLAY1;
-        }
-      }
-      else if (tape_state_req == S_FF) {
-        if (tape_state == S_REW) {
-          tape_state = S_STOP1;
-          tape_state_next = S_FF1;
-        }
-        else if (!(tape_state >= S_FF1 && tape_state <= S_FF2)) {
-          tape_state = S_FF1;
-        }
-      }
-      else if (tape_state_req == S_REW) {
-        if (tape_state == S_FF) {
-          tape_state = S_STOP1;
-          tape_state_next = S_REW1;
-        }
-        if (!(tape_state >= S_REW1 && tape_state <= S_REW2)) {
-          tape_state = S_REW1;
-        }
-      }
-      tape_state_req = S_DEFAULT;
-      break;
-
-    case S_STOP1:
-      if (motor2.controller == MotionControlType::velocity) {
-        if (fabs(motor2.shaft_velocity) > 3.14f) {
-          motor2.target = fsgn(motor2.target) * (fabs(motor2.target) - 0.1f);
-        }
-        else {
-          tape_state = S_STOP2;
-        }
-      }
-      else if (motor1.controller == MotionControlType::velocity) {
-        if (fabs(motor1.shaft_velocity) > 3.14f) {
-          motor1.target = fsgn(motor1.target) * (fabs(motor1.target) - 0.1f);
-        }
-        else {
-          tape_state = S_STOP2;
-        }
-      }
-      else {
-        tape_state = S_STOP2;
-      }
-      tape_state_timer = millis() + 25;
-      break;
-    case S_STOP2:
-      if (millis() > tape_state_timer) {
-        // revert motor swap before applying torque
-        motor1.controller = MotionControlType::torque;
-        motor1.target = 0.025;
-
-        motor2.controller = MotionControlType::torque;
-        motor2.target = -0.025;
-
-        tape_state_timer = millis() + 50;
-        tape_state = S_STOP3;
-        Serial.println("->S_STOP3");
-      }
-      break;
-    case S_STOP3:
-      if (millis() > tape_state_timer) {
-        stopmotor1->target = 0;
-        stopmotor2->target = 0;
-        tape_state = S_DEFAULT;
-        if (tape_state_next >= 0) {
-          tape_state = tape_state_next;
-          tape_state_next = -1;
-        }
-        Serial.print("STOP->"); Serial.println(tape_state);
-      }
-      break;
-    case S_PLAY1:
-      // pull the slack on supply reel after initialisation
-      motor1.controller = MotionControlType::torque;
-      motor1.target = 0.02; 
-      motor2.controller = MotionControlType::torque;
-      motor2.target = -0.02; 
-      tape_state_timer = millis() + 30;
-      tape_state = S_PLAY2;
-      break;
-    case S_PLAY2:
-      if (millis() > tape_state_timer) {
-        motor1.controller = MotionControlType::torque;
-        motor1.target = 0.02; 
-
-        motor2.controller = MotionControlType::velocity;
-        motor2.target = -TAPE_PLAY_SPEED; // 1 rps
-        tape_state = S_PLAY;
-      }
-      break;
-    case S_PLAY_FF1:
-      if (motor2.target < -TAPE_PLAY_SPEED) {
-        motor2.target += 0.01;
-      }
-      else {
-        tape_state = S_PLAY2;
-      }
-      break;
-    case S_FF1:
-      // pull the slack on supply reel after initialisation
-      motor1.controller = MotionControlType::torque;
-      motor1.target = 0.02; // Volts
-      motor2.controller = MotionControlType::velocity;
-      motor2.target = -TAPE_PLAY_SPEED;
-      tape_state_timer = millis() + 250;
-      tape_state = S_FF2;
-      break;
-    case S_FF2:
-      if (millis() > tape_state_timer) {
-        motor2.controller = MotionControlType::velocity;
-        motor2.target = -TAPE_FAST_SPEED;
-        tape_state = S_FF;
-      }
-      break;
-    case S_REW1:
-      motor1.controller = MotionControlType::velocity;
-      motor1.target = TAPE_PLAY_SPEED;
-      motor2.controller = MotionControlType::torque;
-      motor2.target = -0.02;
-      tape_state_timer = millis() + 250;
-      tape_state = S_REW2;
-      break;
-    case S_REW2:
-      if (millis() > tape_state_timer) {
-        Serial.println("->S_REW");
-        motor1.target = TAPE_FAST_SPEED_REW;
-        tape_state = S_REW;
-      }
-      break;
-  }
-}
 
 void doPlayForward(char *cmd) {
     deckControl.press_button(DeckButton::PLAY_FORWARD);
@@ -535,6 +402,9 @@ unsigned long last_poll_us = 0;
 
 
 void loop() {
+//    motor1.target = 3.14f;
+//    motorLoop(motor1);
+//    return;
 #if WITH_MOTORS
   motorLoop(motor1);
   motorLoop(motor2);
@@ -544,7 +414,6 @@ void loop() {
 
 #endif
 #if WITH_DECK_CONTROLS
-  //control_fsm();
   tape_sensor_poll();
   deckControl.loop();
 #endif
