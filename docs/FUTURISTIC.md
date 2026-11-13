@@ -71,3 +71,9 @@ My motors didn't have the encoder mounted and it turns out you can't just stick 
 The optical chip PWM3389 is made using Vorlon technology. It seems to be tracking tape, time will tell how reliable it is.
 
 Update: time did tell. The mouse sensor is not useful for tape tracking. SQUAL parameter can be used to detect tape leader, but the speed reading is highly variable and unpredictable. Update video link: [Tapeshnik Pt.6](https://www.youtube.com/watch?v=3gg_O02B6kA)
+
+![ruined-motor](futuristic/ruined-motor.jpg)
+
+Well that's it. This is what happens when a screw is 1mm too long.
+
+Before destroying the motor I was coming to a conclusion that 9V is simply not enough to properly spin these motors and I need a 12V board like SimpleFOCMini 2.0 with DRV8313 and at least 12V power supply.
