@@ -59,7 +59,7 @@ int tape_sensor_squal = 0;
 BLDCMotor motor1 = BLDCMotor(/*pp=*/7, /*R=*/11.3, /*KV=*/ 196); 
 BLDCDriver3PWM driver1 = BLDCDriver3PWM(3, 4, 5); // PWM1_U/V/W, no enable
 MagneticSensorSPI magneticSensor1 = MagneticSensorSPI(AS5047_SPI, PIN_MOTOR1_SENSOR_CS_N);
-SmoothingSensor smoothingSensor1 = SmoothingSensor(magneticSensor1, motor1)
+SmoothingSensor smoothingSensor1 = SmoothingSensor(magneticSensor1, motor1);
 
 // MOTOR2 (takeup spindle)
 BLDCMotor motor2 = BLDCMotor(/*pp=*/7, /*R=*/11.3, /*KV=*/ 196); 
@@ -100,10 +100,10 @@ void pidSetup(BLDCMotor& motor)
   #if 1 
   // velocity loop PID
   motor.PID_velocity.P = 0.4;
-  motor.PID_velocity.I = 8;
+  motor.PID_velocity.I = 30;
   motor.PID_velocity.D = 0.0011;
-  motor.PID_velocity.output_ramp = 300.0;
-  motor.PID_velocity.limit = 7.0;
+  motor.PID_velocity.output_ramp = 1000.0;
+  motor.PID_velocity.limit = 20.0f;
 
 //  // Low pass filtering time constant
   motor.LPF_velocity.Tf = 0.02f;    // larger value -> bigger start/stop jerk
@@ -135,7 +135,7 @@ void pidSetup(BLDCMotor& motor)
   //motor.voltage_limit = 4.0f;
 
   // for external 9V
-  motor.voltage_limit = 7.0f;
+  motor.voltage_limit = 9.0f;
 }
 
 void sensorInit(MagneticSensorSPI &sensor)
@@ -167,11 +167,12 @@ void motorInit(BLDCMotor &motor, BLDCDriver3PWM &driver, Sensor &sensor, uint8_t
   
   // driver config
   driver.voltage_power_supply = 9; // Replace with your power supply voltage
+  driver.voltage_limit = 9;
   driver.pwm_frequency = 24000; // default 24000
   driver.init();
   sync_pwm_slices();
   motor.linkDriver(&driver);
-  motor.voltage_sensor_align = 2;
+  motor.voltage_sensor_align = 5;
 
   motor.torque_controller = TorqueControlType::voltage;
   //motor.controller = MotionControlType::torque;

@@ -88,7 +88,7 @@ public:
     static constexpr float TORQUE_TAKEUP_NORMAL = 0.2f;
     static constexpr float TORQUE_TAKEUP_FAST = 0.3f;
 
-    static constexpr float NORMAL_SPEED = 47.7e-3f;
+    static constexpr float NORMAL_SPEED = 4 * 47.7e-3f; // try going faster
     static constexpr float FF_SPEED = 30 * 47.7e-3f;
     // empty reel radius = 11.5mm (TASCAM cassette, approx)
     static constexpr float R0 = 11.5e-3f;
