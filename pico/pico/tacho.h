@@ -11,3 +11,7 @@ void tacho_init(int pin);
 void tacho_set_dir(int dir);
 void tacho_set_counter(int value);
 int tacho_get_counter();
+
+#if WITH_NEWTACH
+int tacho_get_secondary_counter();
+#endif

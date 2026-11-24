@@ -32,7 +32,7 @@ void request_wheel_stop()
     mainloop_request = ML_STOP_REQUEST;
 }
 
-char tacho_counter_str[16];
+char tacho_counter_str[32];
 int last_tacho_counter = -1;
 int last_wheel_position = -1;
 int last_motor_status = -1;
@@ -117,6 +117,7 @@ int main() {
 
     // Wait forever
     while (1) {
+        //printf("%d", gpio_get(GPIO_NEWTACH));
         int c = mainloop_request;
         mainloop_request = ML_NO_REQUEST;
         if (c == ML_NO_REQUEST) {
@@ -182,7 +183,14 @@ int main() {
             last_tacho_counter = tacho_get_counter();
             last_wheel_position = wheel.get_position();
             last_motor_status = motor.get_status();
+
+#if WITH_NEWTACH
+            int32_t tc2 = tacho_get_secondary_counter();
+
+            snprintf(tacho_counter_str, 22, "  %+05d:%+05d    \r", last_tacho_counter, tc2);
+#else
             snprintf(tacho_counter_str, 16, "  %+05d    \r", last_tacho_counter);
+#endif
             
             int bgcolor = last_motor_status ? 44 : 42;
             switch (last_wheel_position) {
