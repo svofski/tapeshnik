@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "pico/stdlib.h"
+#include "config.h"
 #include "tacho.h"
 #include "wheel.h"
 #include "mainloop.h"
@@ -11,17 +12,40 @@ int32_t tacho_counter = 0;
 int32_t tacho_dir = 0;
 int32_t autostop_alarm_counter = 0;
 
+#if WITH_NEWTACH
+int32_t secondary_tacho_counter = 0;
+#endif
+
 void interruptor_cb(uint gpio, uint32_t events)
 {
     tacho_counter += tacho_dir;
     autostop_alarm_reset();
 }
 
+#if WITH_NEWTACH
+void secondary_interruptor_cb(uint gpio, uint32_t events)
+{
+    secondary_tacho_counter += tacho_dir;
+}
+
+void  secondary_tacho_init()
+{
+    gpio_init(GPIO_NEWTACH);
+    gpio_disable_pulls(GPIO_NEWTACH);
+    gpio_set_input_hysteresis_enabled(GPIO_NEWTACH, true);
+    gpio_set_dir(GPIO_NEWTACH, GPIO_IN);
+    debounce_add_gpio_direct(GPIO_NEWTACH, secondary_interruptor_cb);
+}
+#endif
+
 void tacho_init(int pin)
 {
     gpio_pull_down(pin);
     gpio_set_input_hysteresis_enabled(pin, true);
     debounce_add_gpio_direct(pin, interruptor_cb);
+#if WITH_NEWTACH
+    secondary_tacho_init();
+#endif
 }
 
 void tacho_set_dir(int dir)
@@ -32,12 +56,22 @@ void tacho_set_dir(int dir)
 void tacho_set_counter(int cnt)
 {
     tacho_counter = cnt;
+#if WITH_NEWTACH
+    secondary_tacho_counter = cnt;
+#endif
 }
 
 int tacho_get_counter()
 {
     return tacho_counter;
 }
+
+#if WITH_NEWTACH
+int tacho_get_secondary_counter()
+{
+    return secondary_tacho_counter;
+}
+#endif
 
 // ---- tape rip detection ------
 // detect if takeup reel is moving too fast

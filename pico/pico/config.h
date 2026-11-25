@@ -18,6 +18,10 @@
 
 #define GPIO_TACHO 19
 
+// experimental optical sensor on roller wheel
+#define WITH_NEWTACH 0  // 1 to enable
+#define GPIO_NEWTACH 26 // gpio 26, same as adc0
+
 #define MOD_HALFPERIOD  8     // number of clocks per half-period in modulation
                               // also hardcoded in bitstream.pio !
 #define MOD_FREQ  2000 // take it easy
